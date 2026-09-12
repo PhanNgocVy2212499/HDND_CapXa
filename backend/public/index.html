@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HĐND Xã — Quản lý Nghị quyết (Quy trình 1)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .card { background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  pre.log { white-space:pre-wrap; word-break:break-word; }
+  input,select,textarea { outline:none; }
+  input:focus,select:focus,textarea:focus { border-color:#16a34a !important; box-shadow:0 0 0 2px #bbf7d0; }
+</style>
+</head>
+<body class="bg-green-50 min-h-screen text-slate-800">
+<!-- HEADER -->
+<header class="bg-green-700 text-white shadow">
+  <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-bold">🏛️ HĐND Cấp Xã — Quản lý &amp; Theo dõi Nghị quyết</h1>
+      <p class="text-green-100 text-sm">Quy trình 1: Upload OCR → Cây chỉ tiêu → Giao việc → Báo cáo → Thẩm tra</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="healthDot" class="w-3 h-3 rounded-full bg-gray-300 inline-block" title="trạng thái backend"></span>
+      <button onclick="checkHealth()" class="bg-white text-green-700 text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-green-100">Kiểm tra backend</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 py-6 space-y-6">
+
+  <!-- CẤU HÌNH TOKEN -->
+  <section class="card p-4">
+    <h2 class="font-bold text-green-800 mb-2">🔑 0. Token đăng nhập (bắt buộc — API nào cũng cần)</h2>
+    <p class="text-sm text-slate-500 mb-3">Lấy ID Token theo <b>HUONG-DAN-CHAY.md mục 4</b> (mỗi vai trò 1 token khác nhau). Dán vào đây, token được nhớ trong trình duyệt.</p>
+    <div class="flex flex-col md:flex-row gap-2">
+      <input id="token" type="password" placeholder="Dán Firebase ID Token vào đây (Bearer ...)"
+        class="flex-1 border rounded-lg px-3 py-2 text-sm" />
+      <button onclick="toggleToken()" class="border px-3 py-2 rounded-lg text-sm">👁️ Hiện/ẩn</button>
+      <button onclick="saveToken()" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700">Lưu token</button>
+    </div>
+    <p id="tokenState" class="text-xs mt-2 text-slate-500"></p>
+  </section>
+
+  <!-- 1. UPLOAD & OCR -->
+  <section class="card p-4">
+    <h2 class="font-bold text-green-800 mb-1">📤 1. Upload &amp; OCR Nghị quyết <span class="text-xs font-normal text-slate-500">(role: chuyên viên)</span></h2>
+    <div class="grid md:grid-cols-2 gap-4 mt-3">
+      <div>
+        <label class="text-sm font-semibold">File PDF / Ảnh nghị quyết</label>
+        <input id="ocrFile" type="file" accept=".pdf,.png,.jpg,.jpeg" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm bg-white" onchange="previewOcrFile()" />
+        <iframe id="ocrPreview" title="preview" class="w-full h-80 mt-2 border rounded-lg bg-slate-100 hidden"></iframe>
+        <div class="grid grid-cols-2 gap-2 mt-2">
+          <input id="ovCode" placeholder="Sửa tay: Số hiệu (tùy chọn)" class="border rounded-lg px-3 py-2 text-sm" />
+          <input id="ovSigner" placeholder="Sửa tay: Người ký (tùy chọn)" class="border rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <input id="ovTitle" placeholder="Sửa tay: Trích yếu (tùy chọn)" class="w-full border rounded-lg px-3 py-2 mt-2 text-sm" />
+        <button onclick="uploadOcr()" class="mt-3 w-full bg-green-600 text-white font-semibold py-2.5 rounded-lg hover:bg-green-700">⬆️ Upload &amp; OCR</button>
+      </div>
+      <div>
+        <label class="text-sm font-semibold">Kết quả OCR auto-fill (kiểm tra lại trước khi trình)</label>
+        <div class="grid grid-cols-2 gap-2 mt-1">
+          <input id="rCode" placeholder="Số hiệu" class="border rounded-lg px-3 py-2 text-sm" />
+          <input id="rSigner" placeholder="Người ký" class="border rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <textarea id="rTitle" rows="3" placeholder="Trích yếu" class="w-full border rounded-lg px-3 py-2 mt-2 text-sm"></textarea>
+        <div class="grid grid-cols-2 gap-2 mt-2">
+          <input id="rDate" placeholder="Ngày ban hành" class="border rounded-lg px-3 py-2 text-sm" />
+          <input id="rId" placeholder="resolutionId (tự lưu)" class="border rounded-lg px-3 py-2 text-sm font-mono" />
+        </div>
+        <input id="rFile" placeholder="fileUrl" class="w-full border rounded-lg px-3 py-2 mt-2 text-xs font-mono" />
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. CÂY CHỈ TIÊU -->
+  <section class="card p-4">
+    <h2 class="font-bold text-green-800 mb-1">🌳 2. Dựng Cây chỉ tiêu <span class="text-xs font-normal text-slate-500">(role: chuyên viên / thường trực)</span></h2>
+    <div class="grid md:grid-cols-2 gap-4 mt-3">
+      <div class="space-y-2">
+        <input id="tResId" placeholder="resolutionId (lấy từ bước 1)" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" />
+        <textarea id="tJson" rows="12" class="w-full border rounded-lg px-3 py-2 text-xs font-mono">[
+  {
+    "title": "Tỷ lệ hộ nghèo giảm còn dưới 2%",
+    "targetValue": 2,
+    "unit": "%",
+    "frequency": "quarterly",
+    "deadline": "2026-12-31",
+    "assignedDepartments": [
+      { "departmentId": "ubnd-xa", "role": "primary" }
+    ],
+    "children": [
+      {
+        "title": "Hỗ trợ sinh kế 50 hộ",
+        "targetValue": 50,
+        "unit": "hộ",
+        "frequency": "monthly",
+        "deadline": "2026-09-30"
+      }
+    ]
+  }
+]</textarea>
+        <button onclick="saveTree()" class="w-full bg-green-600 text-white font-semibold py-2.5 rounded-lg hover:bg-green-700">💾 Lưu cây &amp; trình duyệt</button>
+      </div>
+      <div>
+        <label class="text-sm font-semibold">indicatorId vừa tạo (vào Firestore → indicators để copy, dán vào bước 3–4)</label>
+        <input id="tIndId" placeholder="indicatorId" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm font-mono" />
+        <p class="text-xs text-slate-500 mt-2">Mẹo: sau khi lưu, mở Firebase Console → Firestore → collection <b>indicators</b> → copy 1 document ID có <b>resolutionId</b> trùng bước 1.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 + 4 + 5 -->
+  <div class="grid md:grid-cols-3 gap-6">
+    <section class="card p-4">
+      <h2 class="font-bold text-green-800 mb-1">✅ 3. Phê duyệt &amp; giao việc</h2>
+      <p class="text-xs text-slate-500 mb-2">(role: thường trực)</p>
+      <input id="aId" placeholder="indicatorId" class="w-full border rounded-lg px-3 py-2 text-sm font-mono mb-2" />
+      <input id="aDeadline" type="date" value="2026-12-31" class="w-full border rounded-lg px-3 py-2 text-sm mb-2" />
+      <textarea id="aDeps" rows="6" class="w-full border rounded-lg px-3 py-2 text-xs font-mono mb-2">[
+  { "departmentId": "ubnd-xa", "departmentName": "UBND xã", "role": "primary" },
+  { "departmentId": "tai-chinh", "departmentName": "Công chức Tài chính", "role": "cooperate" }
+]</textarea>
+      <button onclick="approveInd()" class="w-full bg-emerald-600 text-white font-semibold py-2 rounded-lg hover:bg-emerald-700">Duyệt &amp; giao việc</button>
+    </section>
+
+    <section class="card p-4">
+      <h2 class="font-bold text-green-800 mb-1">📊 4. Báo cáo tiến độ</h2>
+      <p class="text-xs text-slate-500 mb-2">(role: cơ quan thực hiện)</p>
+      <input id="pId" placeholder="indicatorId" class="w-full border rounded-lg px-3 py-2 text-sm font-mono mb-2" />
+      <div class="grid grid-cols-2 gap-2 mb-2">
+        <input id="pVal" type="number" value="1.5" placeholder="Số thực tế" class="border rounded-lg px-3 py-2 text-sm" />
+        <input id="pPct" type="number" value="70" min="0" max="100" placeholder="% hoàn thành" class="border rounded-lg px-3 py-2 text-sm" />
+      </div>
+      <input id="pRemark" placeholder="Ghi chú / khó khăn" class="w-full border rounded-lg px-3 py-2 text-sm mb-2" />
+      <input id="pFile" type="file" class="w-full border rounded-lg px-3 py-2 text-xs mb-2 bg-white" />
+      <button onclick="sendReport()" class="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700">Gửi báo cáo</button>
+      <input id="pRepId" placeholder="reportId trả về (dùng cho bước 5)" class="w-full border rounded-lg px-3 py-2 mt-2 text-xs font-mono" />
+    </section>
+
+    <section class="card p-4">
+      <h2 class="font-bold text-green-800 mb-1">🔍 5. Thẩm tra</h2>
+      <p class="text-xs text-slate-500 mb-2">(role: ban HĐND / thường trực)</p>
+      <input id="vRepId" placeholder="progressReportId" class="w-full border rounded-lg px-3 py-2 text-sm font-mono mb-2" />
+      <select id="vStatus" class="w-full border rounded-lg px-3 py-2 text-sm mb-2">
+        <option value="passed">Đồng ý (passed)</option>
+        <option value="need_clarification">Yêu cầu giải trình (need_clarification)</option>
+      </select>
+      <textarea id="vComment" rows="4" placeholder="Nhận xét thẩm tra" class="w-full border rounded-lg px-3 py-2 text-sm mb-2">Số liệu khớp minh chứng. Đồng ý.</textarea>
+      <button onclick="sendReview()" class="w-full bg-amber-600 text-white font-semibold py-2 rounded-lg hover:bg-amber-700">Gửi thẩm tra</button>
+    </section>
+  </div>
+
+  <!-- LOG -->
+  <section class="card p-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="font-bold text-green-800">🧾 Kết quả / Nhật ký gọi API</h2>
+      <button onclick="clearLog()" class="text-xs border px-3 py-1 rounded-lg">Xóa log</button>
+    </div>
+    <pre id="log" class="log bg-slate-900 text-green-200 text-xs rounded-lg p-3 max-h-96 overflow-auto">Sẵn sàng. Hãy lưu token ở mục 0 rồi thao tác từ bước 1 → 5.
+</pre>
+  </section>
+</main>
+
+<footer class="text-center text-xs text-slate-400 pb-6">Backend: <span class="font-mono">/api/*</span> · Health: <span class="font-mono">/health</span> · DB: Firestore · Storage: Firebase Storage</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const log = (title, obj) => {
+  const t = new Date().toLocaleTimeString('vi-VN');
+  $('log').textContent = `[${t}] ${title}\n` +
+    (typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)) +
+    '\n\n' + $('log').textContent;
+};
+const token = () => ($('token').value || '').trim();
+const authHeaders = (isJson = true) => {
+  const h = {};
+  if (isJson) h['Content-Type'] = 'application/json';
+  if (token()) h['Authorization'] = 'Bearer ' + token();
+  return h;
+};
+const remember = (k, v) => { try { localStorage.setItem(k, v); } catch(e){} };
+
+// --- token ---
+$('token').value = localStorage.getItem('hdnd_token') || '';
+updateTokenState();
+function saveToken(){ remember('hdnd_token', token()); updateTokenState(); log('Đã lưu token', token() ? 'OK (' + token().slice(0,12) + '...)' : '(trống!)'); }
+function toggleToken(){ $('token').type = $('token').type === 'password' ? 'text' : 'password'; }
+function updateTokenState(){ $('tokenState').textContent = token() ? '✅ Đã có token, gọi API sẽ kèm Authorization.' : '⚠️ Chưa có token — mọi API sẽ báo 401.'; }
+
+// --- health ---
+async function checkHealth(){
+  try {
+    const r = await fetch('/health'); const j = await r.json();
+    $('healthDot').className = 'w-3 h-3 rounded-full bg-green-500 inline-block';
+    log('GET /health → ' + r.status, j);
+  } catch(e){ $('healthDot').className = 'w-3 h-3 rounded-full bg-red-500 inline-block'; log('Backend chưa chạy?', String(e)); }
+}
+
+// --- 1. upload ocr ---
+function previewOcrFile(){
+  const f = $('ocrFile').files[0];
+  if(!f) return;
+  $('ocrPreview').classList.remove('hidden');
+  $('ocrPreview').src = URL.createObjectURL(f);
+}
+async function uploadOcr(){
+  const f = $('ocrFile').files[0];
+  if(!f) return log('Thiếu file', 'Hãy chọn PDF/ảnh trước.');
+  if(!token()) return log('Thiếu token', 'Dán token của CHUYÊN VIÊN ở mục 0.');
+  const fd = new FormData();
+  fd.append('file', f);
+  if($('ovCode').value) fd.append('codeNumber', $('ovCode').value);
+  if($('ovTitle').value) fd.append('title', $('ovTitle').value);
+  if($('ovSigner').value) fd.append('signer', $('ovSigner').value);
+  log('Đang upload & OCR...', f.name);
+  try{
+    const r = await fetch('/api/resolutions/upload-ocr', { method:'POST', headers:{ 'Authorization':'Bearer '+token() }, body:fd });
+    const j = await r.json();
+    log(`POST /api/resolutions/upload-ocr → ${r.status}`, j);
+    if(r.ok && j.data){
+      $('rCode').value = j.data.codeNumber || ''; $('rTitle').value = j.data.title || '';
+      $('rSigner').value = j.data.signer || ''; $('rDate').value = j.data.issuanceDate || '';
+      $('rId').value = j.data.id || ''; $('rFile').value = j.data.fileUrl || '';
+      $('tResId').value = j.data.id || '';
+      remember('resolutionId', j.data.id || '');
+    }
+  }catch(e){ log('Lỗi upload', String(e)); }
+}
+
+// --- 2. tree ---
+async function saveTree(){
+  try{
+    const body = { resolutionId: $('tResId').value.trim(), tree: JSON.parse($('tJson').value) };
+    const r = await fetch('/api/indicators/tree', { method:'POST', headers:authHeaders(), body:JSON.stringify(body) });
+    log(`POST /api/indicators/tree → ${r.status}`, await r.json());
+  }catch(e){ log('Lỗi (JSON cây sai cú pháp?)', String(e)); }
+}
+
+// --- 3. approve ---
+async function approveInd(){
+  const id = $('aId').value.trim() || $('tIndId').value.trim();
+  if(!id) return log('Thiếu indicatorId', 'Lấy trong Firestore → indicators.');
+  try{
+    const body = { deadline: $('aDeadline').value, assignedDepartments: JSON.parse($('aDeps').value) };
+    const r = await fetch('/api/indicators/' + encodeURIComponent(id) + '/approve', { method:'PUT', headers:authHeaders(), body:JSON.stringify(body) });
+    log(`PUT /api/indicators/${id}/approve → ${r.status}`, await r.json());
+  }catch(e){ log('Lỗi duyệt', String(e)); }
+}
+
+// --- 4. report ---
+async function sendReport(){
+  const fd = new FormData();
+  fd.append('indicatorId', ($('pId').value || $('tIndId').value).trim());
+  fd.append('actualValue', $('pVal').value);
+  fd.append('progressPercentage', $('pPct').value);
+  fd.append('remarks', $('pRemark').value);
+  if($('pFile').files[0]) fd.append('evidence', $('pFile').files[0]);
+  if(!fd.get('indicatorId')) return log('Thiếu indicatorId', 'Điền indicatorId trước.');
+  try{
+    const r = await fetch('/api/reports', { method:'POST', headers:{ 'Authorization':'Bearer '+token() }, body:fd });
+    const j = await r.json();
+    log(`POST /api/reports → ${r.status}`, j);
+    if(r.ok && j.reportId){ $('pRepId').value = j.reportId; $('vRepId').value = j.reportId; }
+  }catch(e){ log('Lỗi gửi báo cáo', String(e)); }
+}
+
+// --- 5. review ---
+async function sendReview(){
+  try{
+    const body = { progressReportId: $('vRepId').value.trim(), status: $('vStatus').value, comment: $('vComment').value };
+    const r = await fetch('/api/reviews', { method:'POST', headers:authHeaders(), body:JSON.stringify(body) });
+    log(`POST /api/reviews → ${r.status}`, await r.json());
+  }catch(e){ log('Lỗi thẩm tra', String(e)); }
+}
+
+function clearLog(){ $('log').textContent = ''; }
+// auto-fill id đã nhớ
+$('tResId').value = localStorage.getItem('resolutionId') || '';
+checkHealth();
+</script>
+</body>
+</html>

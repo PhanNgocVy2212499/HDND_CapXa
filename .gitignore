@@ -1,0 +1,22 @@
+# Secrets — KHÔNG commit khóa thật
+backend/.env
+frontend/.env
+*.pem
+serviceAccountKey.json
+*-key.json
+
+# Dependencies & build
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+dist/
+backend/public/uploads/
+frontend/dist/
+
+# Logs & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json

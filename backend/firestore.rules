@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function role() { return request.auth.token.role; }
+
+    match /resolutions/{id} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && role() in ['chuyen_vien', 'thuong_truc'];
+      allow delete: if false;
+    }
+    match /indicators/{id} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && role() in ['chuyen_vien', 'thuong_truc'];
+      allow delete: if false;
+    }
+    match /progressReports/{id} {
+      allow read: if signedIn();
+      // Bắt buộc văn bản nguồn: client ghi trực tiếp phải có evidenceFileUrl
+      allow create: if signedIn() && role() == 'co_quan_thuc_hien'
+        && request.resource.data.evidenceFileUrl is string
+        && request.resource.data.evidenceFileUrl.size() > 0;
+      allow update: if signedIn() && role() in ['co_quan_thuc_hien', 'ban_hdnd', 'thuong_truc'];
+      allow delete: if false;
+    }
+    match /reviews/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && role() in ['ban_hdnd', 'thuong_truc'];
+      allow delete: if false;
+    }
+    match /auditLogs/{id} {
+      // Append-only: được đọc công khai nội bộ, chỉ backend (Admin SDK) được ghi
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if false;
+    }
+  }
+}
