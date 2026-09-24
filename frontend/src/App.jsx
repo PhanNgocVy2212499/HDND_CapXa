@@ -11,7 +11,8 @@ import ReviewForm from "./components/ReviewForm";
 import { ToastProvider, useToast } from "./components/Toaster";
 import UploadOcr from "./components/UploadOcr";
 import { checkHealth, setToken } from "./lib/api";
-import { ROLE_LABELS, auth, firebaseConfigured, logout, onAuthStateChanged, roleFromToken } from "./lib/firebase";
+import api from "./lib/api";
+import { ROLE_LABELS, auth, firebaseConfigured, logout, onAuthStateChanged, refreshToken, roleFromToken } from "./lib/firebase";
 
 function Shell() {
   const toast = useToast();
@@ -125,6 +126,15 @@ function Shell() {
     }
   }, []);
 
+  // Token hết hạn sau ~1h → tự refresh mỗi 45 phút khi còn đăng nhập (tránh 401 giữa chừng)
+  useEffect(() => {
+    if (!fbUser) return;
+    const timer = setInterval(() => {
+      refreshToken().catch(() => {});
+    }, 45 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [fbUser]);
+
   useEffect(() => {
     onCheckHealth();
   }, [onCheckHealth]);
@@ -142,6 +152,42 @@ function Shell() {
     setView("dashboard");
     toast("info", "Đã đăng xuất.");
   }, [toast]);
+
+  // Mở NQ cũ để làm tiếp: đổi NQ đang mở + xóa state phiên cũ để các tab
+  // (Cây chỉ tiêu / Phê duyệt / Báo cáo / Thẩm tra) tự tải lại từ server theo NQ mới.
+  // Lấy full detail để tab Text OCR + PDF gốc xem được (list chỉ có thông tin gọn).
+  const handlePickResolution = useCallback(
+    async (r) => {
+      if (!r?.id) return;
+      if (resolution?.id === r.id) {
+        toast("info", "Đang mở nghị quyết này rồi.");
+        return;
+      }
+      let full = r;
+      try {
+        const { data } = await api.get(`/resolutions/${r.id}`);
+        if (data?.data) full = { ...r, ...data.data };
+      } catch {
+        /* offline — dùng thông tin cơ bản */
+      }
+      setResolution(full);
+      setNodes([]);
+      setCreatedIndicators([]);
+      setApprovedIds([]);
+      setReports([]);
+      setReviews([]);
+      setResolutionPreview((prev) => {
+        try {
+          if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+        } catch {
+          /* ignore */
+        }
+        return null;
+      });
+      toast("success", `Đã mở ${full.codeNumber || "nghị quyết"} để làm tiếp — các tab sẽ tải lại từ server.`);
+    },
+    [resolution?.id, toast]
+  );
 
   if (!authReady) {
     return (
@@ -192,13 +238,43 @@ function Shell() {
               reports={reports}
               reviews={reviews}
               onGo={setView}
+              onPickResolution={handlePickResolution}
             />
           )}
           {view === "upload" && (
             <UploadOcr
               resolution={resolution}
-              onCreated={(r, preview) => {
+              onCreated={(r, preview, extracted) => {
                 setResolution(r);
+                // Chỉ tiêu đã tự tách từ OCR → nạp sẵn để Phê duyệt/Báo cáo/Tổng quan thấy ngay
+                if (extracted?.length) {
+                  setNodes(
+                    (extracted ?? []).map((n) => ({
+                      key: n.id,
+                      parent: n.parentId ?? null,
+                      title: n.title,
+                      target: n.targetValue ?? "",
+                      unit: n.unit || "",
+                      freq: n.frequency || "quarterly",
+                      deadline: n.deadline || "",
+                      dept: n.dept || "ubnd-xa",
+                      role: n.role || "primary",
+                      resolutionId: r.id,
+                    }))
+                  );
+                  setCreatedIndicators(
+                    (extracted ?? []).map((n) => ({
+                      id: n.id,
+                      title: n.title,
+                      parentId: n.parentId ?? null,
+                      deadline: n.deadline || "",
+                      targetValue: n.targetValue,
+                      unit: n.unit,
+                      resolutionId: r.id,
+                      status: "pending_approval",
+                    }))
+                  );
+                }
                 if (preview?.url) {
                   setResolutionPreview((prev) => {
                     try {
@@ -219,9 +295,13 @@ function Shell() {
               resolution={resolution}
               filePreview={resolutionPreview}
               onGo={setView}
+              onPickResolution={handlePickResolution}
               onSubmitted={(flat, created) => {
-                setNodes(flat);
-                if (created?.length) setCreatedIndicators(created ?? []);
+                setNodes((flat ?? []).map((n) => ({ ...n, resolutionId: n.resolutionId || resolution?.id || "" })));
+                if (created?.length)
+                  setCreatedIndicators(
+                    (created ?? []).map((n) => ({ ...n, resolutionId: n.resolutionId || resolution?.id || "" }))
+                  );
               }}
             />
           )}
@@ -230,10 +310,7 @@ function Shell() {
               resolution={resolution}
               indicators={createdIndicators}
               onApproved={(id) => setApprovedIds((prev) => [...prev, id])}
-              onPickResolution={(r) => {
-                setResolution(r);
-                setCreatedIndicators([]);
-              }}
+              onPickResolution={handlePickResolution}
             />
           )}
           {view === "report" && (
@@ -241,7 +318,10 @@ function Shell() {
               resolution={resolution}
               indicators={createdIndicators}
               onReported={(r) =>
-                setReports((prev) => [...prev, { ...r, at: new Date().toISOString() }])
+                setReports((prev) => [
+                  ...prev,
+                  { ...r, resolutionId: r.resolutionId || resolution?.id || "", at: new Date().toISOString() },
+                ])
               }
             />
           )}

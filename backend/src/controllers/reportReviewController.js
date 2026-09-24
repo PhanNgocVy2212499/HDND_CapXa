@@ -3,8 +3,8 @@
  * POST /api/reports — Cơ quan thực hiện gửi báo cáo (kèm file minh chứng)
  * POST /api/reviews — Ban HĐND thẩm tra
  */
-const { admin, db } = require('../config/firebaseAdmin');
-const { uploadBuffer } = require('../services/storageService');
+const { admin, db, storage } = require('../config/firebaseAdmin');
+const { uploadBuffer, inferStoragePathFromUrl } = require('../services/storageService');
 const { writeAudit } = require('../services/auditService');
 
 async function submitReport(req, res) {
@@ -66,7 +66,7 @@ async function submitReport(req, res) {
       message: `Báo cáo ${period || ''} cho "${indicator.title}" kèm minh chứng bắt buộc`,
     });
 
-    return res.status(201).json({ message: 'Đã gửi báo cáo tiến độ.', reportId: ref.id });
+    return res.status(201).json({ message: 'Đã gửi báo cáo tiến độ.', reportId: ref.id, evidenceFileUrl });
   } catch (e) {
     return res.status(500).json({ message: 'Lỗi gửi báo cáo.', detail: e.message });
   }
@@ -215,4 +215,67 @@ async function listReviews(req, res) {
   }
 }
 
-module.exports = { submitReport, submitReview, listReports, listReviews };
+/**
+ * GET /api/reports/:id/evidence — proxy file minh chứng qua backend (cần đăng nhập).
+ * Lý do: URL Storage public có thể 403 nếu bucket chưa makePublic / Rules private.
+ * Đi qua backend + verifyFirebaseToken thì Ban luôn xem được (mọi role đăng nhập).
+ */
+async function getReportEvidence(req, res) {
+  try {
+    const { id } = req.params;
+    const snap = await db.collection('progressReports').doc(id).get();
+    if (!snap.exists) return res.status(404).json({ message: 'Báo cáo không tồn tại.' });
+    const v = snap.data();
+    const mode = process.env.STORAGE_MODE || 'firebase';
+
+    // Doc cũ thiếu evidenceStoragePath → đoán từ evidenceFileUrl rồi ghi bù
+    const storagePath = v.evidenceStoragePath || inferStoragePathFromUrl(v.evidenceFileUrl, storage.name);
+    if (!v.evidenceStoragePath && storagePath) {
+      snap.ref.update({ evidenceStoragePath: storagePath }).catch(() => {});
+    }
+
+    // Chế độ local: file nằm ở backend/public/<storagePath> (Express đã serve static)
+    if (mode === 'local') {
+      const path = require('path');
+      const fs = require('fs');
+      const abs = path.join(__dirname, '..', '..', 'public', storagePath);
+      if (storagePath && fs.existsSync(abs)) return res.sendFile(abs);
+      if (v.evidenceFileUrl) return res.redirect(v.evidenceFileUrl);
+      return res.status(404).json({ message: 'Không tìm thấy file minh chứng.' });
+    }
+
+    // Cloudinary: link secure_url đã public → redirect thẳng
+    if (mode === 'cloudinary') {
+      if (v.evidenceFileUrl) return res.redirect(v.evidenceFileUrl);
+      return res.status(404).json({ message: 'Báo cáo này thiếu file minh chứng.' });
+    }
+
+    // Firebase: ưu tiên signed URL (xem được kể cả khi file private)
+    if (storagePath) {
+      try {
+        const file = storage.file(storagePath);
+        const [url] = await file.getSignedUrl({ action: 'read', expires: Date.now() + 7 * 24 * 3600 * 1000 });
+        return res.redirect(url);
+      } catch (e) {
+        console.warn('[evidence] signed URL thất bại, fallback download:', e.message);
+        try {
+          const [buffer] = await storage.file(storagePath).download();
+          const name = storagePath.split('/').pop() || 'minh-chung';
+          if (/\.pdf$/i.test(name)) res.type('application/pdf');
+          else if (/\.png$/i.test(name)) res.type('image/png');
+          else if (/\.jpe?g$/i.test(name)) res.type('image/jpeg');
+          res.set('Content-Disposition', `inline; filename="${name}"`);
+          return res.send(buffer);
+        } catch (e2) {
+          // rơi xuống redirect public URL bên dưới
+        }
+      }
+    }
+    if (v.evidenceFileUrl) return res.redirect(v.evidenceFileUrl);
+    return res.status(404).json({ message: 'Báo cáo này thiếu file minh chứng.' });
+  } catch (e) {
+    return res.status(500).json({ message: 'Lỗi lấy file minh chứng.', detail: e.message });
+  }
+}
+
+module.exports = { submitReport, submitReview, listReports, listReviews, getReportEvidence };

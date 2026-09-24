@@ -43,6 +43,27 @@ async function uploadFirebase(buffer, originalName, mimetype, folder) {
   return { fileUrl, storagePath };
 }
 
+/**
+ * Đoán storagePath từ fileUrl cho các document cũ thiếu field storagePath.
+ * - Dạng public: https://storage.googleapis.com/<bucket>/<object-path>
+ * - Dạng Firebase: https://firebasestorage.googleapis.com/v0/b/<bucket>/o/<url-encoded-path>?alt=media
+ */
+function inferStoragePathFromUrl(fileUrl, bucketName) {
+  try {
+    if (!fileUrl || typeof fileUrl !== 'string') return '';
+    const u = new URL(fileUrl);
+    if (u.hostname === 'storage.googleapis.com' && bucketName) {
+      const prefix = `/${bucketName}/`;
+      if (u.pathname.startsWith(prefix)) return decodeURIComponent(u.pathname.slice(prefix.length));
+    }
+    const m = u.pathname.match(/\/o\/(.+)$/);
+    if (m) return decodeURIComponent(m[1]);
+    return '';
+  } catch {
+    return '';
+  }
+}
+
 function getCloudinary() {
   const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
   if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
@@ -102,4 +123,4 @@ async function uploadBuffer(buffer, originalName, mimetype, folder = 'resolution
   return uploadFirebase(buffer, originalName, mimetype, folder);
 }
 
-module.exports = { uploadBuffer };
+module.exports = { uploadBuffer, inferStoragePathFromUrl };

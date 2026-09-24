@@ -12,6 +12,15 @@ const app = express();
 app.use(cors({ origin: process.env.CLIENT_URL?.split(',') || true }));
 app.use(express.json({ limit: '5mb' }));
 
+// Version để frontend kiểm tra backend đã lên bản mới chưa (tránh process cũ giữ cổng)
+const BACKEND_VERSION = '1.4.0-pdf-proxy-2026-09-12';
+const backendInfo = () => ({
+  version: BACKEND_VERSION,
+  projectId: process.env.FIREBASE_PROJECT_ID || '',
+  storageMode: process.env.STORAGE_MODE || 'firebase',
+  serverTime: new Date().toISOString(),
+});
+
 // 1. Giao diện web tĩnh: mở http://localhost:PORT/ sẽ thấy UI (file public/index.html)
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -19,6 +28,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.get('/api', (_req, res) => res.json({
   ok: true,
   service: 'hdnd-resolution-manager',
+  ...backendInfo(),
   health: '/health',
   endpoints: [
     'POST /api/resolutions/upload-ocr',
@@ -33,7 +43,7 @@ app.get('/api', (_req, res) => res.json({
     'GET /api/audit-logs?resolutionId=...',
   ],
 }));
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'hdnd-resolution-manager' }));
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'hdnd-resolution-manager', ...backendInfo() }));
 app.use('/api', apiRoutes);
 
 // eslint-disable-next-line no-unused-vars

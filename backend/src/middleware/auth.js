@@ -10,7 +10,7 @@ async function verifyFirebaseToken(req, res, next) {
     const header = req.headers.authorization || '';
     const [, token] = header.split(' ');
     if (!token) {
-      return res.status(401).json({ message: 'Thiếu Firebase ID Token.' });
+      return res.status(401).json({ message: 'Thiếu Firebase ID Token.', projectId: process.env.FIREBASE_PROJECT_ID || '' });
     }
     const decoded = await auth.verifyIdToken(token, true);
     req.user = {
@@ -23,7 +23,14 @@ async function verifyFirebaseToken(req, res, next) {
     return next();
   } catch (err) {
     console.error('[auth] verifyIdToken failed:', err.message);
-    return res.status(401).json({ message: 'Token không hợp lệ hoặc đã hết hạn.' });
+    // Trả luôn lý do gốc + giờ server để chẩn đoán: hết hạn / sai project / lệch giờ máy chủ
+    return res.status(401).json({
+      message: 'Token không hợp lệ hoặc đã hết hạn.',
+      detail: err.message || '',
+      code: err.code || '',
+      projectId: process.env.FIREBASE_PROJECT_ID || '',
+      serverTime: new Date().toISOString(),
+    });
   }
 }
 

@@ -40,6 +40,9 @@ async function saveNodeRecursive(batch, node, resolutionCtx, parentId = null, ou
     title: node.title,
     parentId,
     deadline: node.deadline,
+    targetValue: node.targetValue,
+    unit: node.unit,
+    frequency: node.frequency || 'quarterly',
     dept: node.assignedDepartments?.[0]?.departmentId || 'ubnd-xa',
     role: node.assignedDepartments?.[0]?.role || 'primary',
   });
@@ -98,28 +101,52 @@ async function upsertTree(req, res) {
   }
 }
 
-/** GET /api/indicators?resolutionId=... — mọi vai trò đăng nhập đều được xem */
+/** GET /api/indicators?resolutionId=...&limit=... — mọi vai trò đăng nhập đều được xem
+ * - Có resolutionId: chỉ tiêu của 1 nghị quyết (giữ nguyên cho các màn nghiệp vụ).
+ * - Không có resolutionId: tất cả chỉ tiêu (mới nhất trước, giới hạn limit) để Tổng quan
+ *   tổng hợp nhiều nghị quyết mà không cần gọi N lần.
+ */
 async function listIndicators(req, res) {
   try {
     const { resolutionId } = req.query;
-    if (!resolutionId) return res.status(400).json({ message: 'Thiếu resolutionId.' });
+    const limit = Math.min(Number(req.query.limit) || 200, 500);
+    const mapItem = (d) => {
+      const v = d.data();
+      return {
+        id: v.id,
+        title: v.title,
+        parentId: v.parentId ?? null,
+        resolutionId: v.resolutionId || '',
+        resolutionCodeNumber: v.resolutionCodeNumber || '',
+        targetValue: v.targetValue,
+        unit: v.unit,
+        frequency: v.frequency,
+        deadline: v.deadline?.toDate?.()?.toISOString().slice(0, 10) ?? null,
+        status: v.status,
+        assignedDepartments: v.assignedDepartments || [],
+        createdAt: v.createdAt?.toDate?.()?.toISOString() ?? '',
+      };
+    };
+    if (!resolutionId) {
+      let docs = [];
+      try {
+        const snap = await db.collection('indicators').orderBy('createdAt', 'desc').limit(limit).get();
+        docs = snap.docs;
+      } catch (indexErr) {
+        // Chưa có index / dữ liệu cũ thiếu createdAt → fallback lấy rồi sort tay
+        console.warn('[indicators] thiếu index, fallback sort tay:', indexErr.message);
+        const snap = await db.collection('indicators').limit(limit).get();
+        docs = snap.docs.sort((a, b) =>
+          String(b.data().createdAt?.toDate?.()?.toISOString() ?? '').localeCompare(
+            String(a.data().createdAt?.toDate?.()?.toISOString() ?? '')
+          )
+        );
+      }
+      return res.json({ data: docs.map(mapItem) });
+    }
     const snap = await db.collection('indicators').where('resolutionId', '==', resolutionId).get();
     const items = snap.docs
-      .map((d) => {
-        const v = d.data();
-        return {
-          id: v.id,
-          title: v.title,
-          parentId: v.parentId ?? null,
-          targetValue: v.targetValue,
-          unit: v.unit,
-          frequency: v.frequency,
-          deadline: v.deadline?.toDate?.()?.toISOString().slice(0, 10) ?? null,
-          status: v.status,
-          assignedDepartments: v.assignedDepartments || [],
-          createdAt: v.createdAt?.toDate?.()?.toISOString() ?? '',
-        };
-      })
+      .map(mapItem)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     return res.json({ data: items });
   } catch (e) {
@@ -160,4 +187,4 @@ async function approveIndicator(req, res) {
   }
 }
 
-module.exports = { upsertTree, listIndicators, approveIndicator };
+module.exports = { upsertTree, listIndicators, approveIndicator, saveNodeRecursive };

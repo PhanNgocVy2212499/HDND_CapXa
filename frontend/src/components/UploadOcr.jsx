@@ -1,8 +1,7 @@
 import { motion } from "framer-motion";
 import { CloudUpload, FileCheck2, FileText, ScanText, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
-import axios from "axios";
-import { API_BASE, authFileHeaders, getToken } from "../lib/api";
+import api, { authFileHeaders, getToken } from "../lib/api";
 import { useToast } from "./Toaster";
 import { Badge, Button, Card, CardHeader, Field, Skeleton, TextInput, TextArea } from "./ui";
 
@@ -16,6 +15,7 @@ export default function UploadOcr({ resolution, onCreated, onGo }) {
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({ codeNumber: "", title: "", signer: "", issuanceDate: "" });
+  const [extracted, setExtracted] = useState([]);
 
   const pick = (f) => {
     if (!f) return;
@@ -42,20 +42,27 @@ export default function UploadOcr({ resolution, onCreated, onGo }) {
       if (form.codeNumber.trim()) fd.append("codeNumber", form.codeNumber.trim());
       if (form.title.trim()) fd.append("title", form.title.trim());
       if (form.signer.trim()) fd.append("signer", form.signer.trim());
-      const { data } = await axios.post(`${API_BASE}/resolutions/upload-ocr`, fd, {
+      const { data } = await api.post("/resolutions/upload-ocr", fd, {
         headers: authFileHeaders(),
         timeout: 90000,
       });
       const r = data.data;
+      const list = data.extractedIndicators ?? [];
+      setExtracted(list);
       setForm({
         codeNumber: r.codeNumber ?? "",
         title: r.title ?? "",
         signer: r.signer ?? "",
         issuanceDate: r.issuanceDate ? new Date(r.issuanceDate).toLocaleDateString("vi-VN") : "",
       });
-      toast("success", "OCR xong — kiểm tra lại rồi sang bước Cây chỉ tiêu.");
+      toast(
+        "success",
+        list.length
+          ? `OCR xong — đã tự tách ${list.length} chỉ tiêu, khỏi nhập tay.`
+          : "OCR xong — kiểm tra lại rồi sang bước Cây chỉ tiêu."
+      );
       // Giữ blob preview để màn Cây chỉ tiêu hiện ngay bên trái, khỏi phụ thuộc fileUrl server
-      onCreated?.(r, previewUrl ? { url: previewUrl, type: file?.type || "", name: file?.name || "" } : null);
+      onCreated?.(r, previewUrl ? { url: previewUrl, type: file?.type || "", name: file?.name || "" } : null, list);
     } catch (e) {
       toast("error", e.response?.data?.message || "Upload/OCR thất bại. Kiểm tra backend và token.");
     } finally {
@@ -183,11 +190,25 @@ export default function UploadOcr({ resolution, onCreated, onGo }) {
                 >
                   <FileCheck2 className="mt-0.5 size-4 shrink-0" />
                   <div className="text-xs font-medium leading-relaxed">
-                    Đã lưu bản nháp <b className="font-mono">{resolution.id}</b>. Sang bước{" "}
-                    <button onClick={() => onGo("tree")} className="font-bold underline underline-offset-2 transition-colors hover:text-emerald-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50">
-                      Cây chỉ tiêu
-                    </button>{" "}
-                    để phân khai nhiệm vụ.
+                    Đã lưu bản nháp <b className="font-mono">{resolution.id}</b>.{" "}
+                    {extracted.length > 0 ? (
+                      <>
+                        Đã tự tách <b>{extracted.length} chỉ tiêu</b> từ văn bản — khỏi nhập tay ở bước{" "}
+                        Cây chỉ tiêu.{" "}
+                        <button onClick={() => onGo("approve")} className="font-bold underline underline-offset-2 transition-colors hover:text-emerald-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50">
+                          Sang Phê duyệt
+                        </button>{" "}
+                        để chốt deadline và giao việc.
+                      </>
+                    ) : (
+                      <>
+                        Văn bản quá ngắn/mờ nên chưa tự tách được — sang bước{" "}
+                        <button onClick={() => onGo("tree")} className="font-bold underline underline-offset-2 transition-colors hover:text-emerald-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50">
+                          Cây chỉ tiêu
+                        </button>{" "}
+                        để nhập tay.
+                      </>
+                    )}
                   </div>
                 </motion.div>
               ) : (

@@ -173,7 +173,7 @@ Tạo 4 tài khoản trong Firebase Authentication (mật khẩu `123456`), gán
 | --- | ---------------------- | --------------------------------- | ----------------------- | --------------------------------------------- |
 | 1   | `chuyenvien@xa.gov.vn` | `chuyen_vien` (Chuyên viên HĐND)  | `hdnd`                  | Upload + OCR, dựng cây chỉ tiêu               |
 | 2   | `thuongtruc@xa.gov.vn` | `thuong_truc` (Thường trực HĐND)  | `thuong-truc`           | Dựng cây, **phê duyệt & giao việc**, thẩm tra |
-| 3   | `ubnd@xa.gov.vn`       | `co_quan_thuc_hien` (UBND/đơn vị) | `ubnd-xa`               | **Báo cáo tiến độ** kèm minh chứng            |
+| 3   | `ubnd@xa.gov.vn`       | `co_quan_thuc_hien` (UBND/đơn vị) | `ubnd-xa`               | **Báo áo tiến độ** kèm minch chứng            |
 | 4   | `banhdnd@xa.gov.vn`    | `ban_hdnd` (Ban HĐND)             | `ban-kinh-te`           | **Thẩm tra** báo cáo                          |
 
 > Sai role gọi API sẽ bị `403`; quên token/hết hạn bị `401`. Đổi vai trò thì đăng xuất → đăng nhập lại (không mở 2 tab 2 tài khoản song song vì Firebase dùng chung localStorage sẽ đá nhau).

@@ -1,8 +1,7 @@
 import { motion } from "framer-motion";
 import { FileUp, Paperclip, Send } from "lucide-react";
 import { useEffect, useState } from "react";
-import axios from "axios";
-import api, { API_BASE, authFileHeaders, getToken } from "../lib/api";
+import api, { authFileHeaders, getToken } from "../lib/api";
 import { useToast } from "./Toaster";
 import { Button, Card, CardHeader, Field, ProgressRing, Select, TextInput, TextArea } from "./ui";
 
@@ -45,7 +44,7 @@ export default function ReportForm({ resolution, indicators, onReported }) {
       fd.append("remarks", remarks);
       if (period.trim()) fd.append("period", period.trim());
       if (file) fd.append("evidence", file);
-      const { data } = await axios.post(`${API_BASE}/reports`, fd, {
+      const { data } = await api.post("/reports", fd, {
         headers: authFileHeaders(),
         timeout: 90000,
       });

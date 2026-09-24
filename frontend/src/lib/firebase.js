@@ -47,6 +47,15 @@ export async function loginEmail(email, password) {
   return cred.user;
 }
 
+// Ép cấp token mới (dùng khi API báo 401 do token cũ hết hạn sau ~1h)
+export async function refreshToken() {
+  const user = auth?.currentUser;
+  if (!user) return null;
+  const t = await user.getIdToken(true);
+  setToken(t);
+  return t;
+}
+
 export async function logout() {
   setToken("");
   if (auth) await signOut(auth);

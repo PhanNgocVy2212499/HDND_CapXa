@@ -5,9 +5,9 @@ const express = require('express');
 const { verifyFirebaseToken } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { upload } = require('../middleware/upload');
-const { uploadOcrResolution, listResolutions } = require('../controllers/resolutionController');
+const { uploadOcrResolution, listResolutions, getResolutionDetail, getResolutionFile } = require('../controllers/resolutionController');
 const { upsertTree, listIndicators, approveIndicator } = require('../controllers/indicatorController');
-const { submitReport, submitReview, listReports, listReviews } = require('../controllers/reportReviewController');
+const { submitReport, submitReview, listReports, listReviews, getReportEvidence } = require('../controllers/reportReviewController');
 const { listAuditLogs } = require('../controllers/auditController');
 
 const router = express.Router();
@@ -20,6 +20,14 @@ router.post('/resolutions/upload-ocr',
 // 1b. Danh sách nghị quyết — mọi role đăng nhập (để máy/tab khác vẫn thấy)
 router.get('/resolutions',
   verifyFirebaseToken, listResolutions);
+
+// 1c. Chi tiết 1 NQ (kèm text OCR) — để mở NQ cũ làm tiếp
+router.get('/resolutions/:id',
+  verifyFirebaseToken, getResolutionDetail);
+
+// 1d. File gốc của NQ — proxy qua backend, tránh 403 link Storage public
+router.get('/resolutions/:id/file',
+  verifyFirebaseToken, getResolutionFile);
 
 // 2. Cây chỉ tiêu — Chuyên viên dựng/trình
 router.post('/indicators/tree',
@@ -41,6 +49,11 @@ router.post('/reports',
 // 4b. Danh sách báo cáo — mọi role đăng nhập (Ban chọn từ dropdown)
 router.get('/reports',
   verifyFirebaseToken, listReports);
+
+// 4c. File minh chứng của 1 báo cáo — proxy qua backend, mọi role đăng nhập đều xem được
+// (tránh 403 khi URL Storage public chưa mở). Đặt trước route /reports/:id khác nếu có.
+router.get('/reports/:id/evidence',
+  verifyFirebaseToken, getReportEvidence);
 
 // 5. Thẩm tra — Các Ban HĐND (Thường trực cũng có thể thẩm tra)
 router.post('/reviews',
