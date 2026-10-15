@@ -36,3 +36,16 @@ export function alertLevelFor(deadline) {
 }
 
 export const cx = (...parts) => parts.filter(Boolean).join(" ");
+
+export const RESOLUTION_STATUS_META = {
+  draft: { label: "Bản nháp", tone: "slate" },
+  pending_ban_review: { label: "Chờ Ban thẩm tra", tone: "amber" },
+  revision_requested: { label: "Ban yêu cầu sửa", tone: "red" },
+  pending_approval: { label: "Ban đã đồng ý (Chờ duyệt)", tone: "sky" },
+  approved: { label: "Thường trực đã duyệt", tone: "emerald" },
+  completed: { label: "Hoàn thành", tone: "emerald" },
+};
+
+export const resolutionStatusLabel = (s) => RESOLUTION_STATUS_META[s]?.label || s || "—";
+export const resolutionStatusTone = (s) => RESOLUTION_STATUS_META[s]?.tone || "slate";
+

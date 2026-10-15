@@ -186,32 +186,40 @@ Tạo 4 tài khoản trong Firebase Authentication (mật khẩu `123456`), gán
 
 ### Giai đoạn 2 — Dựng cây chỉ tiêu (Chuyên viên)
 
-- Sang màn **Cây chỉ tiêu** (PDF gốc nằm bên trái để vừa nhìn vừa nhập, chỉ tiêu con tự thụt 1 nấc + nhãn `Cấp 2/3`) → **+ Thêm chỉ tiêu** → nhập tên/con số/đơn vị/chu kỳ/deadline/phòng ban → **Lưu & trình duyệt**.
-- API: `POST /api/indicators/tree` `{ resolutionId, tree: [...] }` → NQ chuyển `pending_approval` + audit `upsert_tree`.
+- Sang màn **Cây chỉ tiêu** (PDF gốc nằm bên trái để vừa nhìn vừa nhập, chỉ tiêu con tự thụt 1 nấc + nhãn `Cấp 2/3`) → **+ Thêm chỉ tiêu** → nhập tên/con số/đơn vị/chu kỳ/deadline/phòng ban → **Lưu & Gửi Ban HĐND thẩm tra**.
+- API: `POST /api/indicators/tree` `{ resolutionId, tree: [...] }` → NQ chuyển `pending_ban_review` + audit `upsert_tree`.
 - Ghi lại 1 `indicatorId` (Firestore → `indicators`).
 
-### Giai đoạn 3 — Phê duyệt & giao việc (Thường trực)
+### Giai đoạn 3 — Ban HĐND thẩm tra cây chỉ tiêu (Ban HĐND)
 
-- Đăng nhập TK 2 → màn **Phê duyệt** → dropdown **Nghị quyết cần duyệt** (lấy từ server nên khác máy/tab vẫn thấy) → **Tải danh sách** → chốt deadline + đơn vị chủ trì/phối hợp → **Duyệt / Duyệt tất cả**.
-- API: `PUT /api/indicators/:id/approve` → chỉ tiêu thành `assigned` + audit `approve_indicator` (lưu before/after).
+- Đăng nhập TK 4 (`banhdnd@xa.gov.vn`) → màn **Thẩm tra** (tab **1. Thẩm tra Cây chỉ tiêu NQ**) hoặc trực tiếp tại màn **Cây chỉ tiêu**.
+- Chọn Nghị quyết đang ở trạng thái `[Chờ Ban thẩm tra]` → đối chiếu chỉ tiêu với văn bản gốc bên trái.
+- Nhập nhận xét thẩm tra → Bấm **Ban HĐND Đồng ý (Chuyển Thường trực)** hoặc **Yêu cầu chỉnh sửa**.
+- API: `POST /api/resolutions/:id/ban-review` `{ status: 'approved' | 'rejected', comment }` → NQ chuyển `pending_approval` (nếu đồng ý) hoặc `revision_requested` (nếu yêu cầu sửa) + audit `ban_review_resolution`.
+
+### Giai đoạn 4 — Phê duyệt & giao việc (Thường trực HĐND)
+
+- Đăng nhập TK 2 (`thuongtruc@xa.gov.vn`) → màn **Phê duyệt** → chọn Nghị quyết (chỉ duyệt được khi Ban HĐND đã thẩm tra đồng ý; nếu chưa, hệ thống sẽ cảnh báo và khóa nút duyệt để đảm bảo quy trình).
+- Xem ý kiến thẩm tra của Ban HĐND → chốt deadline + ấn định đơn vị chủ trì/phối hợp → **Duyệt / Duyệt tất cả**.
+- API: `PUT /api/indicators/:id/approve` → chỉ tiêu thành `assigned`, NQ thành `approved` + audit `approve_indicator` (lưu before/after).
 - Kiểm tra: `GET /api/indicators?resolutionId=...`.
 
-### Giai đoạn 4 — Báo cáo tiến độ (Đơn vị thực hiện)
+### Giai đoạn 5 — Báo cáo tiến độ (Đơn vị thực hiện)
 
-- Đăng nhập TK 3 → màn **Báo cáo** → chọn chỉ tiêu → nhập số liệu thực tế, % hoàn thành, kỳ (`2026-Q3`), ghi chú → **bắt buộc đính kèm file minh chứng** → **Gửi báo cáo** (thiếu file bị `400`).
+- Đăng nhập TK 3 (`ubnd@xa.gov.vn`) → màn **Báo cáo** → chọn chỉ tiêu → nhập số liệu thực tế, % hoàn thành, kỳ (`2026-Q3`), ghi chú → **bắt buộc đính kèm file minh chứng** → **Gửi báo cáo** (thiếu file bị `400`).
 - API: `POST /api/reports` (form-data `indicatorId, actualValue, progressPercentage, remarks, evidence`) → tạo `progressReports/{id}` `submitted`, indicator thành `in_progress` + audit `submit_report`.
 - Kiểm tra: `GET /api/reports?resolutionId=...`.
 
-### Giai đoạn 5 — Thẩm tra (Ban HĐND / Thường trực)
+### Giai đoạn 6 — Thẩm tra báo cáo tiến độ (Ban HĐND / Thường trực)
 
-- Đăng nhập TK 4 → màn **Thẩm tra** → dropdown chọn báo cáo (hiện trạng thái `Chờ thẩm tra/Đã duyệt/Cần làm lại`, số liệu, file minh chứng) → kết luận `passed` hoặc `need_clarification` + nhận xét bắt buộc → **Gửi thẩm tra**.
+- Đăng nhập TK 4 → màn **Thẩm tra** (tab **2. Thẩm tra Báo cáo tiến độ**) → dropdown chọn báo cáo (hiện trạng thái `Chờ thẩm tra/Đã duyệt/Cần làm lại`, số liệu, file minh chứng) → kết luận `passed` hoặc `need_clarification` + nhận xét bắt buộc → **Gửi thẩm tra báo cáo**.
 - API: `POST /api/reviews` → tạo `reviews/{id}`, báo cáo thành `approved`/`rejected` + audit `submit_review`; xem lại ở `GET /api/reviews?progressReportId=...`.
 - Lặp `Báo cáo → Thẩm tra` theo từng kỳ tới khi 100%.
 
-### Giai đoạn 6 — Tổng quan & giám sát (mọi vai trò)
+### Giai đoạn 7 — Tổng quan & giám sát (mọi vai trò)
 
-- Màn **Tổng quan**: pipeline 5 bước, % hoàn thành trung bình, cảnh báo deadline đỏ (quá hạn) / vàng (≤7 ngày) — logic đồng bộ cron backend chạy 01:00 đêm (`jobs/deadlineMonitor.js`, `red` tự chuyển `overdue`).
-- Truy vết toàn trình: `GET /api/audit-logs?resolutionId=<idNQ>` trả đủ chuỗi `create_resolution → upsert_tree → approve → report → review` kèm actor + timestamp + văn bản nguồn.
+- Màn **Tổng quan**: pipeline các bước, % hoàn thành trung bình, cảnh báo deadline đỏ (quá hạn) / vàng (≤7 ngày) — logic đồng bộ cron backend chạy 01:00 đêm (`jobs/deadlineMonitor.js`, `red` tự chuyển `overdue`).
+- Truy vết toàn trình: `GET /api/audit-logs?resolutionId=<idNQ>` trả đủ chuỗi `create_resolution → upsert_tree → ban_review_resolution → approve → report → review` kèm actor + timestamp + văn bản nguồn.
 
 ## 5. Báo cáo đồ án — những gì đã đạt được
 

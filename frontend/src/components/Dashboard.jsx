@@ -240,11 +240,18 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
     () => [
       { id: "upload", label: "Upload & OCR", done: !!resolution || totalResolutions > 0 },
       { id: "tree", label: "Cây chỉ tiêu", done: displayNodes.length > 0 },
-      { id: "approve", label: "Phê duyệt", done: displayNodes.some((n) => n.approved) },
-      { id: "report", label: "Báo cáo", done: displayReports.length > 0 },
-      { id: "review", label: "Thẩm tra", done: reviews.some((r) => r.status === "passed") },
+      {
+        id: "review",
+        label: "Ban HĐND thẩm tra",
+        done:
+          allResolutions.some((r) => ["pending_approval", "approved", "completed"].includes(r.status)) ||
+          ["pending_approval", "approved", "completed"].includes(resolution?.status),
+      },
+      { id: "approve", label: "Thường trực duyệt", done: displayNodes.some((n) => n.approved) },
+      { id: "report", label: "Báo cáo tiến độ", done: displayReports.length > 0 },
+      { id: "review", label: "Thẩm tra báo cáo", done: reviews.some((r) => r.status === "passed") },
     ],
-    [resolution, totalResolutions, displayNodes, displayReports, reviews]
+    [resolution, totalResolutions, allResolutions, displayNodes, displayReports, reviews]
   );
 
   const scopeCounts = useMemo(() => {

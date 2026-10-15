@@ -4,7 +4,7 @@
  * Luồng: validate file -> upload Storage -> OCR -> tạo resolutions/{id} status='draft'
  */
 const { admin, db, storage } = require('../config/firebaseAdmin');
-const { uploadBuffer, inferStoragePathFromUrl } = require('../services/storageService');
+const { uploadBuffer, inferStoragePathFromUrl, serveStoredFile } = require('../services/storageService');
 const { ocrResolutionFile } = require('../services/ocrService');
 const { extractIndicatorsFromText } = require('../services/indicatorExtractor');
 const { saveNodeRecursive } = require('./indicatorController');
@@ -86,9 +86,9 @@ async function uploadOcrResolution(req, res) {
           for (const node of tree) await saveNodeRecursive(batch, node, ctx, null, saved);
           await batch.commit();
           extractedIndicators = saved;
-          draft.status = 'pending_approval';
+          draft.status = 'pending_ban_review';
           await docRef.update({
-            status: 'pending_approval',
+            status: 'pending_ban_review',
             updatedAt: admin.firestore.Timestamp.now(),
           });
         }
@@ -150,6 +150,12 @@ async function listResolutions(req, res) {
         issuanceDate: v.issuanceDate?.toDate?.()?.toISOString() ?? null,
         ocrConfidence: v.ocrConfidence ?? 0,
         ocrEngine: v.ocrEngine ?? 'none',
+        banReview: v.banReview ? {
+          status: v.banReview.status,
+          comment: v.banReview.comment || '',
+          reviewedBy: v.banReview.reviewedBy || '',
+          reviewedAt: v.banReview.reviewedAt?.toDate?.()?.toISOString() ?? null,
+        } : null,
         createdAt: v.createdAt?.toDate?.()?.toISOString() ?? '',
       };
     });
@@ -178,6 +184,12 @@ async function getResolutionDetail(req, res) {
         fileUrl: v.fileUrl || '',
         storagePath: v.storagePath || '',
         issuanceDate: v.issuanceDate?.toDate?.()?.toISOString() ?? null,
+        banReview: v.banReview ? {
+          status: v.banReview.status,
+          comment: v.banReview.comment || '',
+          reviewedBy: v.banReview.reviewedBy || '',
+          reviewedAt: v.banReview.reviewedAt?.toDate?.()?.toISOString() ?? null,
+        } : null,
         ocrRawText: v.ocrRawText || '',
         ocrConfidence: v.ocrConfidence ?? 0,
         ocrEngine: v.ocrEngine || 'none',
@@ -191,16 +203,14 @@ async function getResolutionDetail(req, res) {
 }
 
 /**
- * GET /api/resolutions/:id/file — proxy file gốc qua backend (cần đăng nhập).
- * Link Storage public hay 403 khi bucket chưa makePublic → đi qua backend + signed URL
- * thì tab Cây chỉ tiêu luôn xem được PDF gốc của NQ cũ.
+ * GET /api/resolutions/:id/file — proxy/stream file gốc qua backend (cần đăng nhập).
+ * Stream trực tiếp từ Cloudinary (vượt qua ACL deny và CORS header), Firebase Storage, hoặc Local disk.
  */
 async function getResolutionFile(req, res) {
   try {
     const snap = await db.collection('resolutions').doc(req.params.id).get();
     if (!snap.exists) return res.status(404).json({ message: 'Nghị quyết không tồn tại.' });
     const v = snap.data();
-    const mode = process.env.STORAGE_MODE || 'firebase';
 
     // Doc cũ thiếu storagePath → đoán từ fileUrl rồi ghi bù để lần sau khỏi đoán
     const storagePath = v.storagePath || inferStoragePathFromUrl(v.fileUrl, storage.name);
@@ -208,48 +218,113 @@ async function getResolutionFile(req, res) {
       snap.ref.update({ storagePath }).catch(() => {});
     }
 
-    if (mode === 'local') {
-      const path = require('path');
-      const fs = require('fs');
-      const abs = storagePath
-        ? path.join(__dirname, '..', '..', 'public', storagePath)
-        : '';
-      if (abs && fs.existsSync(abs)) return res.sendFile(abs);
-      if (v.fileUrl) return res.redirect(v.fileUrl);
-      return res.status(404).json({ message: 'Không tìm thấy file gốc trên server (STORAGE_MODE=local, thiếu file trong public/uploads).' });
-    }
-
-    if (mode === 'cloudinary') {
-      if (v.fileUrl) return res.redirect(v.fileUrl);
-      return res.status(404).json({ message: 'Nghị quyết này thiếu file gốc (không có fileUrl Cloudinary).' });
-    }
-
-    if (storagePath) {
-      try {
-        const [url] = await storage
-          .file(storagePath)
-          .getSignedUrl({ action: 'read', expires: Date.now() + 7 * 24 * 3600 * 1000 });
-        return res.redirect(url);
-      } catch (e) {
-        console.warn('[resolution-file] signed URL thất bại, fallback download:', e.message);
-        try {
-          const [buffer] = await storage.file(storagePath).download();
-          const name = storagePath.split('/').pop() || 'nghi-quyet';
-          if (/\.pdf$/i.test(name)) res.type('application/pdf');
-          else if (/\.png$/i.test(name)) res.type('image/png');
-          else if (/\.jpe?g$/i.test(name)) res.type('image/jpeg');
-          res.set('Content-Disposition', `inline; filename="${name}"`);
-          return res.send(buffer);
-        } catch (e2) {
-          // rơi xuống redirect public URL bên dưới
-        }
-      }
-    }
-    if (v.fileUrl) return res.redirect(v.fileUrl);
-    return res.status(404).json({ message: 'Nghị quyết này thiếu cả storagePath lẫn fileUrl — file gốc chưa từng được lưu.' });
+    const fallbackName = `${(v.codeNumber || 'nghi-quyet').replace(/[^\w.\-]+/g, '_')}.pdf`;
+    return serveStoredFile({
+      req,
+      res,
+      fileUrl: v.fileUrl,
+      storagePath,
+      fallbackName,
+    });
   } catch (e) {
     return res.status(500).json({ message: 'Lỗi lấy file gốc.', detail: e.message });
   }
 }
 
-module.exports = { uploadOcrResolution, listResolutions, getResolutionDetail, getResolutionFile };
+/**
+ * POST /api/resolutions/:id/ban-review — Ban HĐND xã thẩm tra cây chỉ tiêu trước khi chuyển Thường trực
+ * Body: { status: 'approved' | 'rejected', comment: string }
+ * - approved: chuyển sang pending_approval (Thường trực HĐND bắt đầu duyệt & giao việc)
+ * - rejected: chuyển sang revision_requested (yêu cầu Chuyên viên sửa lại)
+ */
+async function banReviewResolution(req, res) {
+  try {
+    const { id } = req.params;
+    const { status, comment } = req.body;
+
+    if (!status || !['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({
+        message: 'Trạng thái thẩm tra phải là "approved" (đồng ý) hoặc "rejected" (yêu cầu sửa).',
+      });
+    }
+
+    const docRef = db.collection('resolutions').doc(id);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ message: 'Không tìm thấy Nghị quyết.' });
+    }
+
+    const resData = snap.data();
+    const now = admin.firestore.Timestamp.now();
+    const isApproved = status === 'approved';
+    const nextStatus = isApproved ? 'pending_approval' : 'revision_requested';
+
+    const banReviewData = {
+      status,
+      comment: (comment || '').trim() || (isApproved ? 'Ban HĐND đồng ý thông qua cây chỉ tiêu.' : 'Ban HĐND yêu cầu chỉnh sửa cây chỉ tiêu.'),
+      reviewedBy: req.user.email || req.user.uid,
+      reviewedByUid: req.user.uid,
+      reviewedAt: now,
+    };
+
+    await docRef.update({
+      status: nextStatus,
+      banReview: banReviewData,
+      updatedAt: now,
+    });
+
+    // Cập nhật trạng thái các chỉ tiêu thuộc NQ
+    const indSnap = await db.collection('indicators').where('resolutionId', '==', id).get();
+    if (!indSnap.empty) {
+      const batch = db.batch();
+      indSnap.docs.forEach((d) => {
+        batch.update(d.ref, {
+          status: isApproved ? 'pending_approval' : 'revision_requested',
+          updatedAt: now,
+        });
+      });
+      await batch.commit();
+    }
+
+    // Ghi audit log truy vết CSDL dùng chung
+    await writeAudit({
+      collection: 'resolutions',
+      docId: id,
+      resolutionId: id,
+      action: 'ban_review_resolution',
+      actor: req.user,
+      before: { status: resData.status, banReview: resData.banReview || null },
+      after: { status: nextStatus, banReview: banReviewData },
+      sourceFileUrl: resData.fileUrl || '',
+      sourceStoragePath: resData.storagePath || '',
+      message: isApproved
+        ? `Ban HĐND đồng ý thông qua cây chỉ tiêu NQ ${resData.codeNumber || id}, chuyển Thường trực duyệt.`
+        : `Ban HĐND yêu cầu chỉnh sửa cây chỉ tiêu NQ ${resData.codeNumber || id}: ${banReviewData.comment}`,
+    });
+
+    return res.json({
+      message: isApproved
+        ? 'Ban HĐND đã đồng ý thông qua cây chỉ tiêu. Đã báo sang Thường trực để phê duyệt & giao việc.'
+        : 'Ban HĐND đã gửi yêu cầu chỉnh sửa cây chỉ tiêu về Chuyên viên.',
+      data: {
+        id,
+        status: nextStatus,
+        banReview: {
+          ...banReviewData,
+          reviewedAt: now.toDate().toISOString(),
+        },
+      },
+    });
+  } catch (e) {
+    console.error('[resolutions/ban-review]', e);
+    return res.status(500).json({ message: 'Lỗi thẩm tra cây chỉ tiêu.', detail: e.message });
+  }
+}
+
+module.exports = {
+  uploadOcrResolution,
+  listResolutions,
+  getResolutionDetail,
+  getResolutionFile,
+  banReviewResolution,
+};

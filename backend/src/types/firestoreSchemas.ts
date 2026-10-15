@@ -19,8 +19,10 @@ export type UserRole =
 
 export type ResolutionStatus =
   | 'draft' // Vừa OCR xong, chuyên viên đang hoàn thiện
-  | 'pending_approval' // Đã trình Thường trực duyệt
-  | 'approved' // Đã duyệt cây chỉ tiêu, bắt đầu triển khai
+  | 'pending_ban_review' // Chuyên viên dựng cây xong, gửi Ban HĐND thẩm tra
+  | 'revision_requested' // Ban HĐND yêu cầu chỉnh sửa cây chỉ tiêu
+  | 'pending_approval' // Ban HĐND đã đồng ý, chuyển Thường trực duyệt & giao việc
+  | 'approved' // Thường trực đã duyệt cây chỉ tiêu, bắt đầu triển khai
   | 'completed'; // Mọi indicator đã hoàn thành / hết hiệu lực
 
 export type IndicatorStatus =
@@ -53,6 +55,14 @@ export type ReviewStatus = 'passed' | 'need_clarification';
 // 1. resolutions — Nghị quyết HĐND
 // Collection: resolutions / Document ID: auto-id hoặc `NQ-2026-001`
 // ============================================================
+export interface BanReview {
+  status: 'approved' | 'rejected';
+  comment: string;
+  reviewedBy: string;
+  reviewedByUid?: string;
+  reviewedAt: Timestamp;
+}
+
 export interface Resolution {
   id: string;
   /** Số hiệu: VD "05/2026/NQ-HĐND" — OCR tự trích, cho phép sửa tay */
@@ -68,6 +78,8 @@ export interface Resolution {
   /** Đường dẫn storage để xóa/ghi đè: resolutions/2026/<uuid>.pdf */
   storagePath?: string;
   status: ResolutionStatus;
+  /** Kết quả thẩm tra cây chỉ tiêu của Ban HĐND xã trước khi chuyển Thường trực */
+  banReview?: BanReview;
   /** Kết quả OCR thô — giữ lại để đối soát khi auto-fill sai */
   ocrRawText?: string;
   ocrConfidence?: number; // 0..1 (nếu dùng Vision API)
@@ -188,6 +200,7 @@ export interface Review {
 export type AuditAction =
   | 'create_resolution'
   | 'upsert_tree'
+  | 'ban_review_resolution'
   | 'approve_indicator'
   | 'submit_report'
   | 'submit_review';

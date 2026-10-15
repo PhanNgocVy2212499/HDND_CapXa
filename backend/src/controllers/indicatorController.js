@@ -75,7 +75,7 @@ async function upsertTree(req, res) {
 
     const beforeStatus = resData.status || 'draft';
     await db.collection('resolutions').doc(resolutionId).update({
-      status: 'pending_approval',
+      status: 'pending_ban_review',
       updatedAt: admin.firestore.Timestamp.now(),
     });
 
@@ -86,13 +86,13 @@ async function upsertTree(req, res) {
       action: 'upsert_tree',
       actor: req.user,
       before: { resolutionStatus: beforeStatus },
-      after: { savedCount: saved.length, resolutionStatus: 'pending_approval', indicators: saved.map((s) => s.id) },
+      after: { savedCount: saved.length, resolutionStatus: 'pending_ban_review', indicators: saved.map((s) => s.id) },
       sourceFileUrl: resData.fileUrl || '',
       sourceStoragePath: resData.storagePath || '',
-      message: `Dựng cây ${saved.length} chỉ tiêu cho NQ ${resData.codeNumber}`,
+      message: `Dựng cây ${saved.length} chỉ tiêu cho NQ ${resData.codeNumber} và gửi Ban HĐND thẩm tra`,
     });
     return res.json({
-      message: `Đã lưu ${saved.length} chỉ tiêu và trình Thường trực phê duyệt.`,
+      message: `Đã lưu ${saved.length} chỉ tiêu và gửi Ban HĐND xã thẩm tra.`,
       indicators: saved,
     });
   } catch (e) {
@@ -163,12 +163,47 @@ async function approveIndicator(req, res) {
     if (!snap.exists) return res.status(404).json({ message: 'Không tìm thấy chỉ tiêu.' });
     const before = snap.data();
 
+    // Kiểm tra nghị quyết đã được Ban HĐND thẩm tra đồng ý chưa
+    if (before.resolutionId) {
+      const resSnap = await db.collection('resolutions').doc(before.resolutionId).get();
+      if (resSnap.exists) {
+        const resData = resSnap.data();
+        if (resData.status === 'pending_ban_review') {
+          return res.status(400).json({
+            message: `Nghị quyết "${resData.codeNumber || before.resolutionId}" đang chờ Ban HĐND xã thẩm tra. Cần Ban HĐND đồng ý thông qua trước khi Thường trực phê duyệt & giao việc.`,
+          });
+        }
+        if (resData.status === 'revision_requested') {
+          return res.status(400).json({
+            message: `Nghị quyết "${resData.codeNumber || before.resolutionId}" đang bị Ban HĐND yêu cầu chỉnh sửa, chưa thể phê duyệt.`,
+          });
+        }
+        if (resData.status === 'draft') {
+          return res.status(400).json({
+            message: `Nghị quyết "${resData.codeNumber || before.resolutionId}" còn ở trạng thái nháp, chưa gửi Ban HĐND thẩm tra.`,
+          });
+        }
+      }
+    }
+
     await ref.update({
       ...(assignedDepartments && { assignedDepartments }),
       ...(deadline && { deadline: admin.firestore.Timestamp.fromDate(new Date(deadline)) }),
       status: status || 'assigned',
       updatedAt: admin.firestore.Timestamp.now(),
     });
+
+    // Cập nhật trạng thái Nghị quyết sang approved nếu đang là pending_approval
+    if (before.resolutionId) {
+      const resRef = db.collection('resolutions').doc(before.resolutionId);
+      const resSnap = await resRef.get();
+      if (resSnap.exists && resSnap.data().status === 'pending_approval') {
+        await resRef.update({
+          status: 'approved',
+          updatedAt: admin.firestore.Timestamp.now(),
+        }).catch(() => {});
+      }
+    }
 
     await writeAudit({
       collection: 'indicators',

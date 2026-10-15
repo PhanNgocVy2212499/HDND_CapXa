@@ -1,8 +1,17 @@
 import { motion } from "framer-motion";
-import { BadgeCheck, CalendarClock, CheckCircle2, Download, ListTree } from "lucide-react";
+import {
+  AlertTriangle,
+  BadgeCheck,
+  CalendarClock,
+  CheckCircle2,
+  Download,
+  ListTree,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import api, { getToken } from "../lib/api";
-import { DEPTS, ROLES, deptName } from "../lib/meta";
+import { DEPTS, ROLES, deptName, resolutionStatusLabel } from "../lib/meta";
 import { useToast } from "./Toaster";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Select, TextInput } from "./ui";
 
@@ -101,7 +110,30 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
     }
   };
 
+  const canApprove =
+    activeResolution?.status === "pending_approval" ||
+    activeResolution?.status === "approved" ||
+    (!activeResolution && rows.length > 0);
+
   const approve = async (row, deadlineOverride) => {
+    if (activeResolution?.status === "pending_ban_review") {
+      return toast(
+        "error",
+        "Nghị quyết đang chờ Ban HĐND xã thẩm tra. Cần Ban HĐND đồng ý trước khi Thường trực phê duyệt."
+      );
+    }
+    if (activeResolution?.status === "revision_requested") {
+      return toast(
+        "error",
+        "Nghị quyết đang bị Ban HĐND yêu cầu chỉnh sửa, chưa thể phê duyệt."
+      );
+    }
+    if (activeResolution?.status === "draft") {
+      return toast(
+        "error",
+        "Nghị quyết còn ở trạng thái nháp, chưa gửi Ban HĐND thẩm tra."
+      );
+    }
     const deadline = deadlineOverride ?? row.deadline;
     if (!deadline) return toast("error", `Chỉ tiêu "${row.title}" chưa có deadline.`);
     if (!getToken()) return toast("error", "Bạn đã bị đăng xuất — đăng nhập lại để tiếp tục.");
@@ -123,6 +155,9 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
   };
 
   const approveAll = async () => {
+    if (!canApprove) {
+      return toast("error", "Chưa đủ điều kiện duyệt — cần Ban HĐND xã đồng ý thông qua trước.");
+    }
     for (const r of rows.filter((r) => !r.approved)) {
       // eslint-disable-next-line no-await-in-loop
       await approve(r);
@@ -146,17 +181,63 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
             )
           }
         />
-        <div className="space-y-2.5 px-4 py-4">
+        <div className="space-y-3 px-4 py-4">
           <Field label="Nghị quyết cần duyệt (lấy từ server — tab/máy nào cũng thấy)">
             <Select value={activeResId} onChange={(e) => pickResolution(e.target.value)}>
               <option value="">— Chọn nghị quyết —</option>
               {resList.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.codeNumber} — {(r.title || "").slice(0, 60)} [{r.status}]
+                  {r.codeNumber} — {(r.title || "").slice(0, 50)} [{resolutionStatusLabel(r.status)}]
                 </option>
               ))}
             </Select>
           </Field>
+
+          {/* Trạng thái thẩm tra của Ban HĐND */}
+          {activeResolution?.status === "pending_ban_review" && (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50/90 p-3.5 text-xs text-amber-900 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+              <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div>
+                <p className="font-extrabold text-amber-900 dark:text-amber-200">
+                  Chưa thể duyệt — Đang chờ Ban HĐND xã thẩm tra
+                </p>
+                <p className="mt-0.5 leading-relaxed text-amber-800/90 dark:text-amber-300/90">
+                  Nghị quyết này đang chờ Ban HĐND xã thẩm tra cây chỉ tiêu. Theo quy trình, chỉ sau khi Ban HĐND đồng ý thông qua, Thường trực HĐND mới tiến hành ấn định deadline và giao việc.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeResolution?.status === "revision_requested" && (
+            <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-50/90 p-3.5 text-xs text-red-900 shadow-sm dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-600 dark:text-red-400" />
+              <div>
+                <p className="font-extrabold text-red-900 dark:text-red-200">
+                  Ban HĐND yêu cầu chỉnh sửa — Chưa thể phê duyệt
+                </p>
+                <p className="mt-0.5 leading-relaxed text-red-800/90 dark:text-red-300/90">
+                  Ý kiến của Ban: <b>"{activeResolution?.banReview?.comment || "Cần điều chỉnh"}"</b>. Đang chờ Chuyên viên cập nhật lại các chỉ tiêu.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {(activeResolution?.status === "pending_approval" || activeResolution?.status === "approved") && (
+            <div className="flex items-start gap-3 rounded-xl border border-emerald-300 bg-emerald-50/90 p-3.5 text-xs text-emerald-900 shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+              <ShieldCheck className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <div>
+                <p className="font-extrabold text-emerald-900 dark:text-emerald-200">
+                  Ban HĐND đã đồng ý thông qua — Đủ điều kiện phê duyệt & giao việc
+                </p>
+                <p className="mt-0.5 leading-relaxed text-emerald-800/90 dark:text-emerald-300/90">
+                  Ý kiến thẩm tra: <i>"{activeResolution?.banReview?.comment || "Đồng ý thông qua"}"</i>
+                  {activeResolution?.banReview?.reviewedBy ? ` (${activeResolution.banReview.reviewedBy})` : ""}.
+                  Thường trực kiểm tra hạn chót, đơn vị chịu trách nhiệm và bấm Duyệt.
+                </p>
+              </div>
+            </div>
+          )}
+
           {rows.length === 0 ? (
             <EmptyState
               icon={ListTree}
@@ -174,7 +255,12 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
                 <Button tone="secondary" onClick={fetchList} disabled={loading} className="flex-1">
                   <Download className="size-4" /> Tải lại
                 </Button>
-                <Button onClick={approveAll} disabled={doneCount === rows.length} className="flex-1">
+                <Button
+                  onClick={approveAll}
+                  disabled={doneCount === rows.length || !canApprove}
+                  className="flex-1"
+                  title={!canApprove ? "Cần Ban HĐND xã đồng ý thông qua trước khi Thường trực phê duyệt" : ""}
+                >
                   <CheckCircle2 className="size-4" /> Duyệt tất cả
                 </Button>
               </div>
@@ -197,7 +283,12 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
                       {r.approved ? (
                         <Badge tone="emerald"><CheckCircle2 className="size-3" /> Đã duyệt</Badge>
                       ) : (
-                        <Button onClick={() => approve(r)} disabled={r.busy} className="!px-3 !py-1.5 !text-xs">
+                        <Button
+                          onClick={() => approve(r)}
+                          disabled={r.busy || !canApprove}
+                          title={!canApprove ? "Chờ Ban HĐND đồng ý trước" : ""}
+                          className="!px-3 !py-1.5 !text-xs"
+                        >
                           {r.busy ? "Đang duyệt…" : "Duyệt"}
                         </Button>
                       )}

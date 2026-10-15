@@ -1,6 +1,6 @@
 /**
  * middleware/auth.js
- * Xác thực Firebase ID Token từ header Authorization: Bearer <token>
+ * Xác thực Firebase ID Token từ header Authorization: Bearer <token> hoặc query ?token=<token>
  * Gắn req.user = { uid, email, role, ...customClaims }
  */
 const { auth } = require('../config/firebaseAdmin');
@@ -8,7 +8,8 @@ const { auth } = require('../config/firebaseAdmin');
 async function verifyFirebaseToken(req, res, next) {
   try {
     const header = req.headers.authorization || '';
-    const [, token] = header.split(' ');
+    const [, headerToken] = header.split(' ');
+    const token = headerToken || req.query.token;
     if (!token) {
       return res.status(401).json({ message: 'Thiếu Firebase ID Token.', projectId: process.env.FIREBASE_PROJECT_ID || '' });
     }

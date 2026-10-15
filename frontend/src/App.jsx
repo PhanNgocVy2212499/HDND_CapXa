@@ -271,7 +271,7 @@ function Shell() {
                       targetValue: n.targetValue,
                       unit: n.unit,
                       resolutionId: r.id,
-                      status: "pending_approval",
+                      status: "pending_ban_review",
                     }))
                   );
                 }
@@ -292,21 +292,25 @@ function Shell() {
           )}
           {view === "tree" && (
             <IndicatorTree
+              role={role}
               resolution={resolution}
               filePreview={resolutionPreview}
               onGo={setView}
               onPickResolution={handlePickResolution}
+              onResolutionUpdated={(updated) => setResolution((prev) => ({ ...prev, ...updated }))}
               onSubmitted={(flat, created) => {
                 setNodes((flat ?? []).map((n) => ({ ...n, resolutionId: n.resolutionId || resolution?.id || "" })));
                 if (created?.length)
                   setCreatedIndicators(
                     (created ?? []).map((n) => ({ ...n, resolutionId: n.resolutionId || resolution?.id || "" }))
                   );
+                setResolution((prev) => (prev ? { ...prev, status: "pending_ban_review" } : prev));
               }}
             />
           )}
           {view === "approve" && (
             <ApproveAssign
+              role={role}
               resolution={resolution}
               indicators={createdIndicators}
               onApproved={(id) => setApprovedIds((prev) => [...prev, id])}
@@ -327,11 +331,13 @@ function Shell() {
           )}
           {view === "review" && (
             <ReviewForm
+              role={role}
               resolution={resolution}
               indicators={createdIndicators}
               reportId={reports[reports.length - 1]?.reportId ?? ""}
               timeline={reviews}
               onReviewed={(r) => setReviews((prev) => [...prev, r])}
+              onResolutionUpdated={(updated) => setResolution((prev) => ({ ...prev, ...updated }))}
             />
           )}
         </motion.div>

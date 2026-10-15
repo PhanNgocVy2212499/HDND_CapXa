@@ -83,9 +83,11 @@ D:\HK5\TTNN
 ### Sơ đồ trạng thái
 
 ```
-Resolution:  draft ──(POST tree)──▶ pending_approval ──(duyệt)──▶ approved ──▶ completed
-Indicator:   draft ──▶ pending_approval ──▶ assigned ──▶ in_progress ──▶ completed
-                                                        └──▶ overdue (cron, quá hạn)
+Resolution:  draft ──(POST tree)──▶ pending_ban_review ──(Ban đồng ý)──▶ pending_approval ──(Thường trực duyệt)──▶ approved ──▶ completed
+                                          │
+                                          └──(Ban yêu cầu sửa)──▶ revision_requested (sửa lại cây)
+Indicator:   draft ──▶ pending_ban_review ──▶ pending_approval ──▶ assigned ──▶ in_progress ──▶ completed
+                                                                                └──▶ overdue (cron, quá hạn)
 Report:      submitted ──(review passed)──▶ approved
                        └──(need_clarification)──▶ rejected (làm lại)
 ```
@@ -96,11 +98,12 @@ Report:      submitted ──(review passed)──▶ approved
 |------|--------|-----|-------|----------------------|
 | **0. Login** | Tất cả | Firebase Auth client | `email/pass` | `ID Token (JWT)` chứa `role`, `departmentId`. Frontend tự gắn `Authorization: Bearer <token>` cho mọi request (`frontend/src/lib/api.js:20-23`) |
 | **1. Upload + OCR** | `chuyen_vien` | `POST /api/resolutions/upload-ocr` (form-data `file`) | PDF/Ảnh NQ | 1) Upload Storage `resolutions/2026/<uuid>_ten.pdf` → `fileUrl` 2) OCR → `fields` 3) Tạo `resolutions/{id}` với `status='draft'`, `ocrRawText`, `ocrEngine`, `ocrConfidence`. Trả `201 {data: {id, codeNumber, title, signer, issuanceDate, fileUrl}}` |
-| **2. Dựng cây chỉ tiêu** | `chuyen_vien` (+ `thuong_truc` cũng được) | `POST /api/indicators/tree` JSON `{resolutionId, tree:[...]}` | Cây `title/targetValue/unit/frequency/deadline/assignedDepartments/children[]` | Lưu đệ quy `indicators` (mỗi node `parentId` trỏ cha). NQ chuyển `pending_approval`. Xem `indicatorController.js:49-72` |
-| **3. Phê duyệt & giao việc** | `thuong_truc` | `PUT /api/indicators/:id/approve` JSON `{deadline, assignedDepartments[]}` | Hạn + đơn vị chủ trì/phối hợp | Indicator → `status='assigned'`. Gán `assignedDepartments=[{departmentId, departmentName, role: primary|cooperate}]` |
-| **4. Báo cáo tiến độ** | `co_quan_thuc_hien` | `POST /api/reports` form-data `indicatorId, actualValue, progressPercentage, remarks, evidence(file)` | Số liệu + file minh chứng | Tạo `progressReports/{id}` `status='submitted'`. Upload minh chứng `evidences/<indicatorId>/...`. Denormalize lên indicator: `currentValue, progressPercentage, status='in_progress'` |
-| **5. Thẩm tra** | `ban_hdnd` hoặc `thuong_truc` | `POST /api/reviews` JSON `{progressReportId, status: passed\|need_clarification, comment}` | Kết luận thẩm tra | Tạo `reviews/{id}`. Đồng bộ report: `passed→approved`, `need_clarification→rejected` |
-| **6. Cron deadline** | Tự động | (không cần gọi, chạy 01:00 đêm) | Quét `indicators` có `status in [assigned, in_progress]` | Tính `alertLevel`: `red` (quá hạn, `<0 ngày`), `yellow` (`<=7 ngày`), `green` (`>7 ngày`). `red` → `status='overdue'`. Xem `deadlineMonitor.js:14-43` |
+| **2. Dựng cây chỉ tiêu** | `chuyen_vien` | `POST /api/indicators/tree` JSON `{resolutionId, tree:[...]}` | Cây `title/targetValue/unit/frequency/deadline/assignedDepartments/children[]` | Lưu đệ quy `indicators`. NQ chuyển `pending_ban_review` (gửi Ban HĐND thẩm tra). Xem `indicatorController.js` |
+| **3. Ban HĐND thẩm tra cây chỉ tiêu** | `ban_hdnd` (hoặc `thuong_truc`) | `POST /api/resolutions/:id/ban-review` JSON `{status:'approved'\|'rejected', comment}` | Kết luận của Ban HĐND | `approved` $\rightarrow$ NQ chuyển `pending_approval` (sẵn sàng chuyển Thường trực); `rejected` $\rightarrow$ `revision_requested` (trả về Chuyên viên sửa). Ghi audit `ban_review_resolution` |
+| **4. Phê duyệt & giao việc** | `thuong_truc` | `PUT /api/indicators/:id/approve` JSON `{deadline, assignedDepartments[]}` | Hạn + đơn vị chủ trì/phối hợp | Chỉ cho duyệt khi Ban HĐND đã đồng ý (`pending_approval`). NQ chuyển `approved`, Indicator $\rightarrow$ `status='assigned'`. Gán `assignedDepartments=[{departmentId, departmentName, role: primary\|cooperate}]` |
+| **5. Báo cáo tiến độ** | `co_quan_thuc_hien` | `POST /api/reports` form-data `indicatorId, actualValue, progressPercentage, remarks, evidence(file)` | Số liệu + file minh chứng | Tạo `progressReports/{id}` `status='submitted'`. Upload minh chứng `evidences/<indicatorId>/...`. Denormalize lên indicator: `currentValue, progressPercentage, status='in_progress'` |
+| **6. Thẩm tra báo cáo tiến độ** | `ban_hdnd` hoặc `thuong_truc` | `POST /api/reviews` JSON `{progressReportId, status: passed\|need_clarification, comment}` | Kết luận thẩm tra | Tạo `reviews/{id}`. Đồng bộ report: `passed→approved`, `need_clarification→rejected` |
+| **7. Cron deadline** | Tự động | (không cần gọi, chạy 01:00 đêm) | Quét `indicators` có `status in [assigned, in_progress]` | Tính `alertLevel`: `red` (quá hạn, `<0 ngày`), `yellow` (`<=7 ngày`), `green` (`>7 ngày`). `red` → `status='overdue'`. Xem `deadlineMonitor.js:14-43` |
 
 ### Ví dụ chạy tay đúng thứ tự (Postman)
 

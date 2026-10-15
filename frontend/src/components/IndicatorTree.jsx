@@ -1,10 +1,27 @@
 import { motion } from "framer-motion";
-import { CornerDownRight, Download, ExternalLink, FileText, FolderOpen, ListTree, Plus, RefreshCw, Rows3, Save, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CornerDownRight,
+  Download,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+  ListTree,
+  Plus,
+  RefreshCw,
+  Rows3,
+  Save,
+  Send,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import api, { API_ROOT, blobErrorMessage, getToken } from "../lib/api";
-import { DEPTS, FREQS, ROLES, alertLevelFor, cx, deptName, freqName } from "../lib/meta";
+import { DEPTS, FREQS, ROLES, alertLevelFor, cx, deptName, freqName, resolutionStatusLabel, resolutionStatusTone } from "../lib/meta";
 import { useToast } from "./Toaster";
-import { AlertDot, Badge, Button, Card, CardHeader, EmptyState, Field, IconButton, Select } from "./ui";
+import { AlertDot, Badge, Button, Card, CardHeader, EmptyState, Field, IconButton, Select, TextArea } from "./ui";
 
 let seq = 0;
 const nid = () => `local-${Date.now()}-${seq++}`;
@@ -57,13 +74,23 @@ function serverToFlat(list) {
   }));
 }
 
-export default function IndicatorTree({ resolution, filePreview, onGo, onSubmitted, onPickResolution }) {
+export default function IndicatorTree({
+  role,
+  resolution,
+  filePreview,
+  onGo,
+  onSubmitted,
+  onPickResolution,
+  onResolutionUpdated,
+}) {
   const toast = useToast();
   const [nodes, setNodes] = useState([]);
   const [saving, setSaving] = useState(false);
   const [leftTab, setLeftTab] = useState("pdf"); // pdf | text
   const [resList, setResList] = useState([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
+  const [banComment, setBanComment] = useState("");
+  const [reviewingBan, setReviewingBan] = useState(false);
 
   // Danh sách NQ từ server — mở lại NQ cũ không cần chung tab upload
   useEffect(() => {
@@ -224,8 +251,12 @@ export default function IndicatorTree({ resolution, filePreview, onGo, onSubmitt
         resolutionId: resolution.id,
         tree: toNested(nodes),
       });
-      toast("success", data.message || "Đã lưu cây chỉ tiêu và trình phê duyệt.");
+      toast("success", data.message || "Đã lưu cây chỉ tiêu và gửi Ban HĐND xã thẩm tra.");
       onSubmitted?.(nodes, data.indicators ?? []);
+      onResolutionUpdated?.({ ...resolution, status: "pending_ban_review" });
+      setResList((prev) =>
+        prev.map((r) => (r.id === resolution.id ? { ...r, status: "pending_ban_review" } : r))
+      );
       // Nạp lại cây từ server để khóa local thành id server — sửa tiếp không bị tạo trùng
       const fresh = await loadSaved(true);
       if (!fresh.length) setNodes((prev) => [...prev]);
@@ -233,6 +264,37 @@ export default function IndicatorTree({ resolution, filePreview, onGo, onSubmitt
       toast("error", e.response?.data?.message || "Lưu cây thất bại.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleBanReview = async (status) => {
+    if (!resolution?.id) return;
+    if (!getToken()) return toast("error", "Bạn đã bị đăng xuất — đăng nhập lại để tiếp tục.");
+    try {
+      setReviewingBan(true);
+      const { data } = await api.post(`/resolutions/${encodeURIComponent(resolution.id)}/ban-review`, {
+        status,
+        comment: banComment.trim(),
+      });
+      toast("success", data.message || "Đã lưu ý kiến thẩm tra của Ban HĐND.");
+      const updatedRes = {
+        ...resolution,
+        status: data.data?.status || (status === "approved" ? "pending_approval" : "revision_requested"),
+        banReview: data.data?.banReview,
+      };
+      onResolutionUpdated?.(updatedRes);
+      setResList((prev) =>
+        prev.map((r) =>
+          r.id === resolution.id
+            ? { ...r, status: updatedRes.status, banReview: updatedRes.banReview }
+            : r
+        )
+      );
+      setBanComment("");
+    } catch (e) {
+      toast("error", e.response?.data?.message || "Thẩm tra thất bại.");
+    } finally {
+      setReviewingBan(false);
     }
   };
 
@@ -268,9 +330,9 @@ export default function IndicatorTree({ resolution, filePreview, onGo, onSubmitt
         >
           <Download className="size-3.5" /> {loadingSaved ? "Đang tải…" : "Tải cây đã lưu"}
         </Button>
-        {resolution.fileUrl && (
+        {(resolution.fileUrl || resolution.id) && (
           <a
-            href={resolution.fileUrl}
+            href={`${API_ROOT}/resolutions/${resolution.id}/file?token=${encodeURIComponent(getToken() || "")}`}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-emerald-600 transition-colors hover:bg-emerald-600/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 dark:text-emerald-400"
@@ -278,7 +340,123 @@ export default function IndicatorTree({ resolution, filePreview, onGo, onSubmitt
             <ExternalLink className="size-3.5" /> Mở PDF tab mới
           </a>
         )}
+        <Badge tone={resolutionStatusTone(resolution.status)}>
+          {resolutionStatusLabel(resolution.status)}
+        </Badge>
       </div>
+
+      {/* Trạng thái quy trình Ban HĐND thẩm tra */}
+      {resolution.status === "pending_ban_review" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-xs shadow-sm dark:border-amber-900/60 dark:bg-amber-950/40">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div>
+              <p className="font-extrabold text-amber-900 dark:text-amber-200">
+                Đang chờ Ban HĐND xã thẩm tra cây chỉ tiêu
+              </p>
+              <p className="mt-0.5 leading-relaxed text-amber-800/90 dark:text-amber-300/90">
+                Chuyên viên đã gửi cây chỉ tiêu cho Ban HĐND xã. Sau khi Ban HĐND đồng ý thông qua, Nghị quyết mới được chuyển sang Thường trực để phê duyệt & giao việc.
+              </p>
+            </div>
+          </div>
+          {(role === "ban_hdnd" || role === "thuong_truc") && (
+            <Badge tone="amber">Bạn có quyền thẩm tra bên dưới</Badge>
+          )}
+        </div>
+      )}
+
+      {resolution.status === "revision_requested" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-300 bg-red-50/90 p-4 text-xs shadow-sm dark:border-red-900/60 dark:bg-red-950/40">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-600 dark:text-red-400" />
+            <div>
+              <p className="font-extrabold text-red-900 dark:text-red-200">
+                Ban HĐND yêu cầu chỉnh sửa cây chỉ tiêu
+              </p>
+              <p className="mt-0.5 leading-relaxed text-red-800/90 dark:text-red-300/90">
+                Ý kiến Ban: <b>"{resolution.banReview?.comment || "Chưa phù hợp"}"</b>
+                {resolution.banReview?.reviewedBy ? ` (${resolution.banReview.reviewedBy})` : ""}.
+                Chuyên viên hãy chỉnh sửa các chỉ tiêu bên dưới rồi bấm <b>"Lưu & Gửi Ban HĐND thẩm tra"</b>.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {resolution.status === "pending_approval" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-300 bg-sky-50/90 p-4 text-xs shadow-sm dark:border-sky-900/60 dark:bg-sky-950/40">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-400" />
+            <div>
+              <p className="font-extrabold text-sky-900 dark:text-sky-200">
+                Ban HĐND đã đồng ý thông qua — Sẵn sàng chuyển Thường trực
+              </p>
+              <p className="mt-0.5 leading-relaxed text-sky-800/90 dark:text-sky-300/90">
+                Ý kiến thẩm tra: <i>"{resolution.banReview?.comment || "Đồng ý"}"</i>
+                {resolution.banReview?.reviewedBy ? ` (${resolution.banReview.reviewedBy})` : ""}.
+                Nghị quyết đã được chuyển sang Thường trực để phê duyệt & giao việc.
+              </p>
+            </div>
+          </div>
+          <Button onClick={() => onGo("approve")} className="!px-3 !py-1.5 !text-xs">
+            Sang tab Phê duyệt →
+          </Button>
+        </div>
+      )}
+
+      {resolution.status === "approved" && (
+        <div className="flex items-center gap-3 rounded-2xl border border-emerald-300 bg-emerald-50/90 p-3.5 text-xs text-emerald-900 shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+          <ShieldCheck className="size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <p className="font-semibold leading-relaxed">
+            <b>Thường trực HĐND đã phê duyệt & giao việc:</b> Các chỉ tiêu đã có đơn vị chủ trì và hạn hoàn thành, sẵn sàng tiếp nhận báo cáo tiến độ.
+          </p>
+        </div>
+      )}
+
+      {/* Khung thao tác thẩm tra nhanh dành riêng cho Ban HĐND (hoặc Thường trực) */}
+      {(role === "ban_hdnd" || role === "thuong_truc") && (
+        <Card className="border-amber-300/80 bg-amber-50/40 dark:border-amber-900/60 dark:bg-amber-950/20">
+          <CardHeader
+            icon={ShieldCheck}
+            title="Thẩm tra cây chỉ tiêu (Dành cho Ban HĐND)"
+            sub="Đối chiếu chỉ tiêu bên phải với văn bản gốc bên trái trước khi chuyển Thường trực duyệt"
+            action={
+              <Badge tone={resolution.status === "pending_approval" ? "emerald" : "amber"}>
+                {resolution.status === "pending_approval" ? "Đã thông qua" : "Cần thẩm tra"}
+              </Badge>
+            }
+          />
+          <div className="space-y-3 px-4 py-3">
+            <Field label="Ý kiến / Nhận xét thẩm tra của Ban HĐND">
+              <TextArea
+                value={banComment}
+                onChange={(e) => setBanComment(e.target.value)}
+                placeholder="Nhập ý kiến thẩm tra: số lượng chỉ tiêu có đầy đủ, con số kế hoạch có khớp văn bản, tính khả thi..."
+                rows={2}
+              />
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => handleBanReview("approved")}
+                disabled={reviewingBan}
+                className="!bg-emerald-600 hover:!bg-emerald-700 !text-white"
+              >
+                <CheckCircle2 className="size-4" />
+                {reviewingBan ? "Đang xử lý…" : "Ban HĐND Đồng ý (Chuyển Thường trực)"}
+              </Button>
+              <Button
+                tone="secondary"
+                onClick={() => handleBanReview("rejected")}
+                disabled={reviewingBan}
+                className="!border-red-300 !text-red-700 hover:!bg-red-50 dark:!border-red-800 dark:!text-red-300"
+              >
+                <AlertTriangle className="size-4" />
+                {reviewingBan ? "Đang xử lý…" : "Yêu cầu chỉnh sửa"}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="grid items-start gap-5 xl:grid-cols-2">
         {/* TRÁI: file nghị quyết — luôn hiện bên cạnh để vừa nhìn vừa nhập */}
@@ -382,7 +560,7 @@ export default function IndicatorTree({ resolution, filePreview, onGo, onSubmitt
                 <Plus className="size-4" strokeWidth={2.5} /> Thêm chỉ tiêu
               </Button>
               <Button tone="secondary" onClick={submit} disabled={saving || nodes.length === 0} className="flex-1">
-                <Save className="size-4" /> {saving ? "Đang lưu…" : "Lưu & trình duyệt"}
+                <Send className="size-4" /> {saving ? "Đang gửi…" : "Lưu & Gửi Ban HĐND thẩm tra"}
               </Button>
             </div>
 
@@ -631,8 +809,11 @@ function ResolutionFileViewer({ resolution }) {
     [blobUrl]
   );
 
+  const serverStreamUrl = rid
+    ? `${API_ROOT}/resolutions/${rid}/file?token=${encodeURIComponent(getToken() || "")}`
+    : directUrl;
   const viewingBlob = Boolean(blobUrl) && !useDirect;
-  const src = viewingBlob ? blobUrl : useDirect ? directUrl : "";
+  const src = viewingBlob ? blobUrl : useDirect ? serverStreamUrl : "";
   const isImage = viewingBlob
     ? blobMime.startsWith("image/")
     : isImageUrl(directUrl);

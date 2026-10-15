@@ -6,7 +6,7 @@ service cloud.firestore {
 
     match /resolutions/{id} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && role() in ['chuyen_vien', 'thuong_truc'];
+      allow create, update: if signedIn() && role() in ['chuyen_vien', 'thuong_truc', 'ban_hdnd'];
       allow delete: if false;
     }
     match /indicators/{id} {

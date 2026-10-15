@@ -4,7 +4,7 @@
  * POST /api/reviews — Ban HĐND thẩm tra
  */
 const { admin, db, storage } = require('../config/firebaseAdmin');
-const { uploadBuffer, inferStoragePathFromUrl } = require('../services/storageService');
+const { uploadBuffer, inferStoragePathFromUrl, serveStoredFile } = require('../services/storageService');
 const { writeAudit } = require('../services/auditService');
 
 async function submitReport(req, res) {
@@ -216,9 +216,8 @@ async function listReviews(req, res) {
 }
 
 /**
- * GET /api/reports/:id/evidence — proxy file minh chứng qua backend (cần đăng nhập).
- * Lý do: URL Storage public có thể 403 nếu bucket chưa makePublic / Rules private.
- * Đi qua backend + verifyFirebaseToken thì Ban luôn xem được (mọi role đăng nhập).
+ * GET /api/reports/:id/evidence — proxy/stream file minh chứng qua backend (cần đăng nhập).
+ * Stream an toàn từ Cloudinary, Firebase Storage, hoặc Local disk.
  */
 async function getReportEvidence(req, res) {
   try {
@@ -226,7 +225,6 @@ async function getReportEvidence(req, res) {
     const snap = await db.collection('progressReports').doc(id).get();
     if (!snap.exists) return res.status(404).json({ message: 'Báo cáo không tồn tại.' });
     const v = snap.data();
-    const mode = process.env.STORAGE_MODE || 'firebase';
 
     // Doc cũ thiếu evidenceStoragePath → đoán từ evidenceFileUrl rồi ghi bù
     const storagePath = v.evidenceStoragePath || inferStoragePathFromUrl(v.evidenceFileUrl, storage.name);
@@ -234,45 +232,14 @@ async function getReportEvidence(req, res) {
       snap.ref.update({ evidenceStoragePath: storagePath }).catch(() => {});
     }
 
-    // Chế độ local: file nằm ở backend/public/<storagePath> (Express đã serve static)
-    if (mode === 'local') {
-      const path = require('path');
-      const fs = require('fs');
-      const abs = path.join(__dirname, '..', '..', 'public', storagePath);
-      if (storagePath && fs.existsSync(abs)) return res.sendFile(abs);
-      if (v.evidenceFileUrl) return res.redirect(v.evidenceFileUrl);
-      return res.status(404).json({ message: 'Không tìm thấy file minh chứng.' });
-    }
-
-    // Cloudinary: link secure_url đã public → redirect thẳng
-    if (mode === 'cloudinary') {
-      if (v.evidenceFileUrl) return res.redirect(v.evidenceFileUrl);
-      return res.status(404).json({ message: 'Báo cáo này thiếu file minh chứng.' });
-    }
-
-    // Firebase: ưu tiên signed URL (xem được kể cả khi file private)
-    if (storagePath) {
-      try {
-        const file = storage.file(storagePath);
-        const [url] = await file.getSignedUrl({ action: 'read', expires: Date.now() + 7 * 24 * 3600 * 1000 });
-        return res.redirect(url);
-      } catch (e) {
-        console.warn('[evidence] signed URL thất bại, fallback download:', e.message);
-        try {
-          const [buffer] = await storage.file(storagePath).download();
-          const name = storagePath.split('/').pop() || 'minh-chung';
-          if (/\.pdf$/i.test(name)) res.type('application/pdf');
-          else if (/\.png$/i.test(name)) res.type('image/png');
-          else if (/\.jpe?g$/i.test(name)) res.type('image/jpeg');
-          res.set('Content-Disposition', `inline; filename="${name}"`);
-          return res.send(buffer);
-        } catch (e2) {
-          // rơi xuống redirect public URL bên dưới
-        }
-      }
-    }
-    if (v.evidenceFileUrl) return res.redirect(v.evidenceFileUrl);
-    return res.status(404).json({ message: 'Báo cáo này thiếu file minh chứng.' });
+    const fallbackName = `minh-chung-${(v.period || v.id || 'bao-cao').replace(/[^\w.\-]+/g, '_')}.pdf`;
+    return serveStoredFile({
+      req,
+      res,
+      fileUrl: v.evidenceFileUrl,
+      storagePath,
+      fallbackName,
+    });
   } catch (e) {
     return res.status(500).json({ message: 'Lỗi lấy file minh chứng.', detail: e.message });
   }

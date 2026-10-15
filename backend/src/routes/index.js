@@ -5,7 +5,7 @@ const express = require('express');
 const { verifyFirebaseToken } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { upload } = require('../middleware/upload');
-const { uploadOcrResolution, listResolutions, getResolutionDetail, getResolutionFile } = require('../controllers/resolutionController');
+const { uploadOcrResolution, listResolutions, getResolutionDetail, getResolutionFile, banReviewResolution } = require('../controllers/resolutionController');
 const { upsertTree, listIndicators, approveIndicator } = require('../controllers/indicatorController');
 const { submitReport, submitReview, listReports, listReviews, getReportEvidence } = require('../controllers/reportReviewController');
 const { listAuditLogs } = require('../controllers/auditController');
@@ -29,7 +29,11 @@ router.get('/resolutions/:id',
 router.get('/resolutions/:id/file',
   verifyFirebaseToken, getResolutionFile);
 
-// 2. Cây chỉ tiêu — Chuyên viên dựng/trình
+// 1e. Ban HĐND thẩm tra cây chỉ tiêu — Ban HĐND (hoặc Thường trực)
+router.post('/resolutions/:id/ban-review',
+  verifyFirebaseToken, requireRole('ban_hdnd', 'thuong_truc'), banReviewResolution);
+
+// 2. Cây chỉ tiêu — Chuyên viên dựng/trình Ban HĐND
 router.post('/indicators/tree',
   verifyFirebaseToken, requireRole('chuyen_vien', 'thuong_truc'), upsertTree);
 
