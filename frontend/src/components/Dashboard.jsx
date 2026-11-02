@@ -182,7 +182,7 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
         ? `${totalResolutions} văn bản trên server`
         : (activeResolution?.codeNumber ?? resolution?.codeNumber ?? "Chưa upload");
     return [
-      { icon: FileText, label: "Nghị quyết", value: String(totalResolutions), hint: scopeHint, tone: "text-sky-500" },
+      { icon: FileText, label: "NQ HĐND xã", value: String(totalResolutions), hint: scopeHint, tone: "text-sky-500" },
       { icon: ListTree, label: "Chỉ tiêu", value: String(displayNodes.length), hint: displayNodes.length ? `${displayNodes.filter((n) => !n.parent).length} nhóm gốc` : "Chưa dựng cây", tone: "text-emerald-500" },
       { icon: ClipboardList, label: "Báo cáo", value: String(displayReports.length), hint: displayReports.length ? `TB ${avg}% hoàn thành` : "Chưa có báo cáo", tone: "text-amber-500" },
       { icon: MessagesSquare, label: "Thẩm tra đạt", value: String(passed), hint: `${reviews.length} lượt thẩm tra`, tone: "text-violet-500" },
@@ -272,7 +272,7 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
         <Card className="px-5 py-4">
           <div className="flex flex-wrap items-center gap-2">
             {steps.map((s, i) => (
-              <div key={s.id} className="flex items-center gap-2">
+              <div key={`${s.id}-${i}`} className="flex items-center gap-2">
                 <button
                   onClick={() => onGo(s.id)}
                   className="flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-bold tracking-tight transition-all duration-200 outline-none hover:border-emerald-300 hover:bg-emerald-50 focus-visible:ring-4 focus-visible:ring-emerald-500/30 active:scale-95 dark:border-slate-700 dark:hover:border-emerald-700 dark:hover:bg-emerald-500/10"
@@ -301,7 +301,7 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
           <div className="flex flex-wrap items-center gap-3">
             <div className="min-w-52 flex-1">
               <label className="mb-1.5 block text-xs font-semibold tracking-tight text-slate-600 dark:text-slate-300">
-                Phạm vi nghị quyết
+                Phạm vi Nghị quyết HĐND xã
               </label>
               <Select value={scope} onChange={(e) => setScope(e.target.value)}>
                 <option value="all">
@@ -399,7 +399,7 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
                   ) : scope === "all" && totalResolutions > 0 ? (
                     <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
                       <p className="text-xs font-bold tracking-tight">
-                        Đang xem tất cả {totalResolutions} nghị quyết
+                        Đang xem tất cả {totalResolutions} Nghị quyết HĐND xã
                       </p>
                       <p className="mt-0.5 text-xs font-medium text-slate-600">
                         {displayNodes.length} chỉ tiêu · {displayReports.length} báo cáo — chọn 1 NQ ở trên để lọc

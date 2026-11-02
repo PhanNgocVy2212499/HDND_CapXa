@@ -1,12 +1,14 @@
 /**
  * server.js — Entry point Express
  */
-require('dotenv').config();
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const apiRoutes = require('./routes');
 const { startDeadlineMonitor } = require('./jobs/deadlineMonitor');
+const { initPostgresSchema } = require('./config/postgres');
 
 const app = express();
 app.use(cors({ origin: process.env.CLIENT_URL?.split(',') || true }));
@@ -49,7 +51,9 @@ app.use('/api', apiRoutes);
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   console.error('[server]', err);
-  res.status(500).json({ message: 'Lỗi hệ thống.', detail: err.message });
+  const isClient = err.status || err.statusCode || (err.message && (err.message.includes('Chỉ chấp nhận') || err.message.includes('dung lượng'))) || err.code === 'LIMIT_FILE_SIZE';
+  const status = isClient ? (err.status || err.statusCode || 400) : 500;
+  res.status(status).json({ message: err.message || 'Lỗi hệ thống.', detail: err.message });
 });
 
 const PORT = process.env.PORT || 5000;
@@ -58,4 +62,5 @@ app.listen(PORT, () => {
   console.log(`[server] Open: http://localhost:${PORT}`);
   console.log(`[server] Health check: http://localhost:${PORT}/health`);
   startDeadlineMonitor();
+  initPostgresSchema();
 });

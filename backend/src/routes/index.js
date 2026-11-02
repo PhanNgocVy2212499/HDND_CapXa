@@ -5,7 +5,16 @@ const express = require('express');
 const { verifyFirebaseToken } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { upload } = require('../middleware/upload');
-const { uploadOcrResolution, listResolutions, getResolutionDetail, getResolutionFile, banReviewResolution } = require('../controllers/resolutionController');
+const {
+  uploadOcrResolution,
+  listResolutions,
+  getResolutionDetail,
+  getResolutionFile,
+  banReviewResolution,
+  completeTreeAndExport,
+  exportResolutionDocx,
+  updateResolution,
+} = require('../controllers/resolutionController');
 const { upsertTree, listIndicators, approveIndicator } = require('../controllers/indicatorController');
 const { submitReport, submitReview, listReports, listReviews, getReportEvidence } = require('../controllers/reportReviewController');
 const { listAuditLogs } = require('../controllers/auditController');
@@ -33,6 +42,12 @@ router.get('/resolutions/:id/file',
 router.post('/resolutions/:id/ban-review',
   verifyFirebaseToken, requireRole('ban_hdnd', 'thuong_truc'), banReviewResolution);
 
+// 1f. Cập nhật thông tin nghị quyết
+router.patch('/resolutions/:id',
+  verifyFirebaseToken, requireRole('chuyen_vien', 'thuong_truc'), updateResolution);
+router.put('/resolutions/:id',
+  verifyFirebaseToken, requireRole('chuyen_vien', 'thuong_truc'), updateResolution);
+
 // 2. Cây chỉ tiêu — Chuyên viên dựng/trình Ban HĐND
 router.post('/indicators/tree',
   verifyFirebaseToken, requireRole('chuyen_vien', 'thuong_truc'), upsertTree);
@@ -40,6 +55,17 @@ router.post('/indicators/tree',
 // 2b. Danh sách chỉ tiêu của 1 nghị quyết — mọi vai trò đăng nhập
 router.get('/indicators',
   verifyFirebaseToken, listIndicators);
+
+// 2c. Hoàn thành xử lý cây chỉ tiêu: Xuất file Word (.docx) & Gửi email tự động đến UBND xã
+router.post('/resolutions/:id/complete-tree',
+  verifyFirebaseToken, requireRole('chuyen_vien', 'thuong_truc'), completeTreeAndExport);
+
+router.post('/indicators/complete-tree',
+  verifyFirebaseToken, requireRole('chuyen_vien', 'thuong_truc'), completeTreeAndExport);
+
+// 2d. Tải trực tiếp file Word (.docx) cây chỉ tiêu
+router.get('/resolutions/:id/export-docx',
+  exportResolutionDocx);
 
 // 3. Duyệt & giao việc — Thường trực HĐND
 router.put('/indicators/:id/approve',

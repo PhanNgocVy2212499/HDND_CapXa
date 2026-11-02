@@ -16,12 +16,17 @@ import {
   ShieldAlert,
   ShieldCheck,
   Trash2,
+  Sparkles,
+  FileDown,
+  Mail,
+  Loader2,
+  FileCheck2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import api, { API_ROOT, blobErrorMessage, getToken } from "../lib/api";
-import { DEPTS, FREQS, ROLES, alertLevelFor, cx, deptName, freqName, resolutionStatusLabel, resolutionStatusTone } from "../lib/meta";
+import api, { API_ROOT, blobErrorMessage, completeTreeAndExport, getExportDocxUrl, getToken } from "../lib/api";
+import { DEPTS, FREQS, ROLES, SAMPLE_COMMUNE_TREE, alertLevelFor, cx, deptName, formatVND, freqName, resolutionStatusLabel, resolutionStatusTone } from "../lib/meta";
 import { useToast } from "./Toaster";
-import { AlertDot, Badge, Button, Card, CardHeader, EmptyState, Field, IconButton, Select, TextArea } from "./ui";
+import { AlertDot, Badge, Button, Card, CardHeader, EmptyState, Field, IconButton, Modal, Select, TextArea, TextInput } from "./ui";
 
 let seq = 0;
 const nid = () => `local-${Date.now()}-${seq++}`;
@@ -91,6 +96,10 @@ export default function IndicatorTree({
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [banComment, setBanComment] = useState("");
   const [reviewingBan, setReviewingBan] = useState(false);
+  const [completing, setCompleting] = useState(false);
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [ubndEmail, setUbndEmail] = useState("ubnd@xa.gov.vn");
+  const [completeResult, setCompleteResult] = useState(null);
 
   // Danh sách NQ từ server — mở lại NQ cũ không cần chung tab upload
   useEffect(() => {
@@ -298,6 +307,73 @@ export default function IndicatorTree({
     }
   };
 
+  const handleCompleteTreeAndExport = async () => {
+    if (!resolution?.id) {
+      toast("error", "Vui lòng chọn hoặc lưu nghị quyết trước khi hoàn tất.");
+      return;
+    }
+    if (nodes.length === 0) {
+      toast("warning", "Cây chỉ tiêu đang trống. Hãy nhập ít nhất 1 chỉ tiêu trước khi hoàn tất.");
+      return;
+    }
+    if (!ubndEmail.trim() || !ubndEmail.includes("@")) {
+      toast("error", "Vui lòng nhập địa chỉ email hợp lệ của UBND xã.");
+      return;
+    }
+
+    try {
+      setCompleting(true);
+      const tree = toNested(nodes);
+      const resData = await completeTreeAndExport(resolution.id, ubndEmail.trim(), tree);
+      const data = resData?.data || resData;
+      setCompleteResult(data);
+      toast("success", "Hoàn thành xử lý cây chỉ tiêu & Đã gửi email tới UBND xã!");
+
+      if (data?.docxBase64) {
+        try {
+          const byteCharacters = atob(data.docxBase64);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], {
+            type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          });
+          const downloadUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = downloadUrl;
+          a.download = data.filename || `NghiQuyet_${resolution.codeNumber || resolution.id}.docx`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(downloadUrl);
+        } catch (dlErr) {
+          console.warn("Lỗi auto download docx:", dlErr);
+        }
+      }
+
+      const updatedRes = {
+        ...resolution,
+        status: data?.resolution?.status || "pending_ban_review",
+        exportSummary: data?.exportSummary,
+      };
+      onResolutionUpdated?.(updatedRes);
+      setResList((prev) =>
+        prev.map((r) =>
+          r.id === resolution.id
+            ? { ...r, status: updatedRes.status }
+            : r
+        )
+      );
+    } catch (e) {
+      console.error("completeTreeAndExport error:", e);
+      toast("error", e.response?.data?.message || e.message || "Xử lý hoàn tất cây chỉ tiêu thất bại.");
+    } finally {
+      setCompleting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
@@ -338,6 +414,17 @@ export default function IndicatorTree({
             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-emerald-600 transition-colors hover:bg-emerald-600/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 dark:text-emerald-400"
           >
             <ExternalLink className="size-3.5" /> Mở PDF tab mới
+          </a>
+        )}
+        {(resolution.id) && (
+          <a
+            href={getExportDocxUrl(resolution.id)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            title="Tải văn bản giao chỉ tiêu file Word (.docx)"
+          >
+            <FileDown className="size-3.5 text-blue-600 dark:text-blue-400" /> Xuất Word (.docx)
           </a>
         )}
         <Badge tone={resolutionStatusTone(resolution.status)}>
@@ -555,12 +642,35 @@ export default function IndicatorTree({
             action={<Badge tone="sky">{nodes.length} dòng</Badge>}
           />
           <div className="space-y-3 px-4 py-4">
-            <div className="flex gap-2">
-              <Button onClick={addRoot} className="flex-1">
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={addRoot} className="flex-1 min-w-28">
                 <Plus className="size-4" strokeWidth={2.5} /> Thêm chỉ tiêu
               </Button>
-              <Button tone="secondary" onClick={submit} disabled={saving || nodes.length === 0} className="flex-1">
+              <Button
+                type="button"
+                tone="secondary"
+                onClick={() => {
+                  setNodes(SAMPLE_COMMUNE_TREE.map((n) => ({ ...n, key: nid() })));
+                  toast("info", "Đã nạp cây chỉ tiêu mẫu chuẩn từ NQ 32 xã Châu Thành.");
+                }}
+                className="!px-3 !py-1.5 !text-xs whitespace-nowrap"
+                title="Áp dụng cây chỉ tiêu mẫu từ NQ 32 xã Châu Thành"
+              >
+                <Sparkles className="size-3.5 mr-1 text-amber-500" />
+                Mẫu NQ 32 cấp xã
+              </Button>
+              <Button tone="secondary" onClick={submit} disabled={saving || nodes.length === 0} className="flex-1 min-w-44">
                 <Send className="size-4" /> {saving ? "Đang gửi…" : "Lưu & Gửi Ban HĐND thẩm tra"}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => setShowCompleteModal(true)}
+                disabled={nodes.length === 0}
+                className="!bg-gradient-to-r !from-emerald-600 !to-teal-600 hover:!from-emerald-700 hover:!to-teal-700 !text-white shadow-md flex-1 min-w-52"
+                title="Xuất file Word và tự động gửi email thông báo kết quả tới UBND xã"
+              >
+                <FileCheck2 className="size-4 mr-1.5" />
+                Hoàn thành xử lý cây chỉ tiêu
               </Button>
             </div>
 
@@ -570,9 +680,21 @@ export default function IndicatorTree({
                 title="Bảng đang trống"
                 hint="Văn bản này chưa tách được chỉ tiêu nào — đọc file PDF bên trái, bấm + Thêm chỉ tiêu rồi gõ tên, con số, chọn phòng ban và deadline."
                 action={
-                  <Button onClick={addRoot}>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button onClick={addRoot}>
                     <Plus className="size-4" strokeWidth={2.5} /> Thêm chỉ tiêu đầu tiên
                   </Button>
+                  <Button
+                    type="button"
+                    tone="secondary"
+                    onClick={() => {
+                      setNodes(SAMPLE_COMMUNE_TREE.map((n) => ({ ...n, key: nid() })));
+                      toast("info", "Đã nạp cây chỉ tiêu mẫu chuẩn từ NQ 32 xã Châu Thành.");
+                    }}
+                  >
+                    <Sparkles className="size-4 mr-1 text-amber-500" /> Nạp mẫu NQ 32 cấp xã
+                  </Button>
+                </div>
                 }
               />
             ) : (
@@ -695,6 +817,107 @@ export default function IndicatorTree({
           </div>
         </Card>
       </div>
+
+      {/* Modal Hoàn thành xử lý cây chỉ tiêu & Gửi email UBND xã */}
+      <Modal
+        open={showCompleteModal}
+        onClose={() => !completing && setShowCompleteModal(false)}
+        title="Hoàn thành xử lý cây chỉ tiêu & Gửi email UBND xã"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 dark:border-emerald-900/60 dark:bg-emerald-950/30">
+            <p className="font-bold text-emerald-900 dark:text-emerald-200 text-sm flex items-center gap-2">
+              <FileCheck2 className="size-4 text-emerald-600 dark:text-emerald-400" />
+              Nghị quyết: {resolution.codeNumber || "Nghị quyết cấp xã"}
+            </p>
+            <p className="mt-1 text-slate-700 dark:text-slate-300 font-medium">{resolution.title}</p>
+            <div className="mt-2.5 flex flex-wrap gap-2 text-[11px]">
+              <span className="rounded-md bg-white/90 px-2 py-0.5 font-semibold text-slate-700 shadow-2xs dark:bg-slate-900 dark:text-slate-300">
+                Tổng cộng: <strong>{nodes.length}</strong> chỉ tiêu đã bóc tách
+              </span>
+              <span className="rounded-md bg-white/90 px-2 py-0.5 font-semibold text-slate-700 shadow-2xs dark:bg-slate-900 dark:text-slate-300">
+                Định dạng xuất: <strong>Microsoft Word (.docx)</strong>
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Field label="Địa chỉ email UBND xã nhận thông báo & văn bản Word:">
+              <TextInput
+                type="email"
+                value={ubndEmail}
+                onChange={(e) => setUbndEmail(e.target.value)}
+                placeholder="ubnd@xa.gov.vn"
+                disabled={completing}
+              />
+            </Field>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+              * Hệ thống sẽ tự động trích xuất kết quả cây chỉ tiêu thành file tài liệu Word (.docx) chuẩn thể thức HĐND cấp xã, đính kèm file và gửi email thông báo kết quả đến UBND xã, đồng thời tải 1 bản về máy tính của bạn.
+            </p>
+          </div>
+
+          {completeResult && (
+            <div className="rounded-xl border border-emerald-300 bg-white p-3.5 shadow-sm dark:border-emerald-800 dark:bg-slate-900">
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold text-sm">
+                <CheckCircle2 className="size-4" />
+                <span>Đã thực hiện hoàn tất thành công!</span>
+              </div>
+              <p className="mt-1 text-slate-600 dark:text-slate-300">
+                File Word đã được tạo và gửi tới email: <strong>{completeResult.recipientEmail}</strong>
+              </p>
+              {completeResult.emailResult?.previewUrl && (
+                <div className="mt-2">
+                  <a
+                    href={completeResult.emailResult.previewUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sky-600 hover:underline font-bold"
+                  >
+                    <Mail className="size-3.5" /> Xem trước Email trên Ethereal Web &rarr;
+                  </a>
+                </div>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <a
+                  href={getExportDocxUrl(resolution.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white shadow-xs hover:bg-emerald-700"
+                >
+                  <Download className="size-3.5" /> Tải lại file Word (.docx)
+                </a>
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <Button
+              tone="secondary"
+              onClick={() => setShowCompleteModal(false)}
+              disabled={completing}
+            >
+              Đóng
+            </Button>
+            <Button
+              onClick={handleCompleteTreeAndExport}
+              disabled={completing || nodes.length === 0}
+              className="!bg-emerald-600 hover:!bg-emerald-700 !text-white"
+            >
+              {completing ? (
+                <>
+                  <Loader2 className="size-4 animate-spin mr-1.5" />
+                  Đang xuất file & gửi email…
+                </>
+              ) : (
+                <>
+                  <Send className="size-4 mr-1.5" />
+                  Xác nhận & Hoàn tất
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -26,7 +26,7 @@ const toRows = (list) =>
     busy: false,
   }));
 
-export default function ApproveAssign({ resolution, indicators, onApproved, onPickResolution }) {
+export default function ApproveAssign({ role, resolution, indicators, onApproved, onPickResolution, onGo }) {
   const toast = useToast();
   const [rows, setRows] = useState(() => toRows(indicators));
   const [loading, setLoading] = useState(false);
@@ -171,8 +171,8 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
       <Card className="xl:col-span-3">
         <CardHeader
           icon={BadgeCheck}
-          title="Duyệt từng chỉ tiêu"
-          sub={activeResolution ? `${activeResolution.codeNumber} — ${rows.length} chỉ tiêu` : "Chọn nghị quyết ở dưới để tải cây chỉ tiêu"}
+          title="Phê duyệt & Giao việc cấp xã"
+          sub={activeResolution ? `${activeResolution.codeNumber} — ${rows.length} chỉ tiêu phân bổ cấp xã` : "Chọn nghị quyết HĐND cấp xã ở dưới để duyệt"}
           action={
             rows.length > 0 && (
               <Badge tone={doneCount === rows.length ? "emerald" : "amber"}>
@@ -182,9 +182,9 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
           }
         />
         <div className="space-y-3 px-4 py-4">
-          <Field label="Nghị quyết cần duyệt (lấy từ server — tab/máy nào cũng thấy)">
+          <Field label="Nghị quyết HĐND cấp xã cần duyệt (Đồng bộ dữ liệu server)">
             <Select value={activeResId} onChange={(e) => pickResolution(e.target.value)}>
-              <option value="">— Chọn nghị quyết —</option>
+              <option value="">— Chọn Nghị quyết HĐND cấp xã —</option>
               {resList.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.codeNumber} — {(r.title || "").slice(0, 50)} [{resolutionStatusLabel(r.status)}]
@@ -192,6 +192,30 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
               ))}
             </Select>
           </Field>
+
+          {/* Thông báo hướng dẫn nếu đang đăng nhập role Ban HĐND */}
+          {role === "ban_hdnd" && (
+            <div className="flex items-start gap-3 rounded-xl border border-sky-300 bg-sky-50/90 p-3.5 text-xs text-sky-900 shadow-sm dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
+              <ShieldCheck className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-400" />
+              <div className="flex-1">
+                <p className="font-extrabold text-sky-900 dark:text-sky-200">
+                  Bạn đang đăng nhập vai trò: Ban HĐND xã
+                </p>
+                <p className="mt-0.5 leading-relaxed text-sky-800/90 dark:text-sky-300/90">
+                  Ban HĐND có thẩm quyền <b>Thẩm tra cây chỉ tiêu</b> (tại tab <b>Cây chỉ tiêu</b>) và <b>Thẩm tra báo cáo tiến độ</b> (tại tab <b>Thẩm tra</b>). Thẩm quyền <b>Phê duyệt & Giao việc</b> chính thức cho UBND tại tab này thuộc về <b>Thường trực HĐND</b> (Chủ tịch / Phó Chủ tịch).
+                </p>
+                {onGo && (
+                  <button
+                    type="button"
+                    onClick={() => onGo("tree")}
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 font-bold text-white shadow-sm hover:bg-sky-700 active:scale-95 transition-all"
+                  >
+                    Mở tab Cây chỉ tiêu để Thẩm tra &rarr;
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Trạng thái thẩm tra của Ban HĐND */}
           {activeResolution?.status === "pending_ban_review" && (
@@ -204,6 +228,15 @@ export default function ApproveAssign({ resolution, indicators, onApproved, onPi
                 <p className="mt-0.5 leading-relaxed text-amber-800/90 dark:text-amber-300/90">
                   Nghị quyết này đang chờ Ban HĐND xã thẩm tra cây chỉ tiêu. Theo quy trình, chỉ sau khi Ban HĐND đồng ý thông qua, Thường trực HĐND mới tiến hành ấn định deadline và giao việc.
                 </p>
+                {onGo && (
+                  <button
+                    type="button"
+                    onClick={() => onGo("tree")}
+                    className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white shadow-sm hover:bg-amber-700 active:scale-95 transition-all"
+                  >
+                    Sang tab Cây chỉ tiêu để Thẩm tra & Đồng ý thông qua &rarr;
+                  </button>
+                )}
               </div>
             </div>
           )}

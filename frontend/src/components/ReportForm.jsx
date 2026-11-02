@@ -53,7 +53,7 @@ export default function ReportForm({ resolution, indicators, onReported }) {
       setRemarks("");
       setFile(null);
     } catch (e) {
-      toast("error", e.response?.data?.message || "Gửi báo cáo thất bại.");
+      toast("error", e.response?.data?.detail || e.response?.data?.message || "Gửi báo cáo thất bại.");
     } finally {
       setSending(false);
     }
@@ -103,8 +103,8 @@ export default function ReportForm({ resolution, indicators, onReported }) {
           <Field label="File minh chứng (bắt buộc)" hint="100% báo cáo phải kèm văn bản nguồn mới có giá trị pháp lý">
             <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-dashed border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-500 transition-all duration-200 outline-none hover:border-emerald-400 hover:bg-emerald-500/[0.03] hover:text-slate-700 focus-visible:ring-4 focus-visible:ring-emerald-500/30 dark:border-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
               <Paperclip className="size-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{file ? file.name : "Đính kèm PDF / ảnh / Excel…"}</span>
-              <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              <span className="min-w-0 flex-1 truncate">{file ? file.name : "Đính kèm PDF, Word, Excel, Ảnh minh chứng…"}</span>
+              <input type="file" className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             </label>
           </Field>
           <Button onClick={submit} disabled={sending} className="w-full">

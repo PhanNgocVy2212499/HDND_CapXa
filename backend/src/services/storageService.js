@@ -83,25 +83,25 @@ function getCloudinary() {
 
 /**
  * Upload lên Cloudinary.
- * - PDF (application/pdf): resource_type 'raw' + format 'pdf', đuôi publicId .pdf để giữ đúng mime/định dạng.
- * - Ảnh (png/jpeg): resource_type 'image' để còn transform/preview như lưu ảnh.
+ * - Ảnh (png/jpeg/webp): resource_type 'image'
+ * - Tài liệu (PDF, Word docx, Excel xlsx...): resource_type 'raw' kèm phần mở rộng file
  */
 function uploadCloudinary(buffer, originalName, mimetype, folder) {
   const cloudinary = getCloudinary();
-  const isPdf = mimetype === 'application/pdf';
+  const isImage = String(mimetype || '').startsWith('image/');
+  const ext = path.extname(originalName || '').toLowerCase();
   const baseName = String(originalName || 'file')
     .replace(/\.[^.]+$/, '')
     .replace(/[^\w\-]+/g, '_')
     .slice(0, 80);
-  const publicId = `${Date.now()}_${uuidv4().slice(0, 8)}_${baseName || 'file'}${isPdf ? '.pdf' : ''}`;
+  const publicId = `${Date.now()}_${uuidv4().slice(0, 8)}_${baseName || 'file'}${isImage ? '' : (ext || '.bin')}`;
 
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
         folder: String(folder || 'hdnd-xa').replace(/^\/+/, ''),
         public_id: publicId,
-        resource_type: isPdf ? 'raw' : 'image',
-        ...(isPdf ? { format: 'pdf' } : {}),
+        resource_type: isImage ? 'image' : 'raw',
       },
       (err, result) => {
         if (err) return reject(err);
@@ -127,9 +127,9 @@ function parseCloudinaryInfo(fileUrl, storagePath) {
     }
   }
   if (storagePath) {
-    const isPdf = /\.pdf$/i.test(storagePath);
+    const isDoc = /\.(pdf|docx|doc|xlsx|xls|csv|txt)$/i.test(storagePath);
     return {
-      resourceType: isPdf ? 'raw' : 'image',
+      resourceType: isDoc ? 'raw' : 'image',
       type: 'upload',
       publicId: storagePath,
     };
@@ -147,11 +147,11 @@ async function getCloudinaryStream(fileUrl, storagePath) {
   if (!info) throw new Error('Không thể xác định thông tin asset Cloudinary.');
 
   const cloudinary = getCloudinary();
-  const isPdf = info.resourceType === 'raw' || /\.pdf$/i.test(info.publicId);
+  const isRawDoc = info.resourceType === 'raw' || /\.(pdf|docx|doc|xlsx|xls|csv|txt)$/i.test(info.publicId);
 
-  if (isPdf) {
-    const format = /\.pdf$/i.test(info.publicId) ? '' : 'pdf';
-    const signedUrl = cloudinary.utils.private_download_url(info.publicId, format, {
+  if (isRawDoc) {
+    const ext = path.extname(info.publicId).replace(/^\./, '');
+    const signedUrl = cloudinary.utils.private_download_url(info.publicId, ext || '', {
       resource_type: 'raw',
       type: info.type || 'upload',
       expires_at: Math.floor(Date.now() / 1000) + 7200,
@@ -159,7 +159,7 @@ async function getCloudinaryStream(fileUrl, storagePath) {
     const upstream = await axios.get(signedUrl, { responseType: 'stream', timeout: 35000 });
     return {
       stream: upstream.data,
-      contentType: 'application/pdf',
+      contentType: upstream.headers['content-type'] || 'application/octet-stream',
       contentLength: upstream.headers['content-length'],
     };
   } else {

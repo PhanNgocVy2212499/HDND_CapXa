@@ -1,0 +1,5 @@
+# Python dependencies cho OCR & trích xuất văn bản Nghị quyết HĐND
+PyMuPDF>=1.24.0
+pytesseract>=0.3.10
+Pillow>=10.0.0
+pdf2image>=1.17.0

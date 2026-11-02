@@ -90,4 +90,15 @@ export async function blobErrorMessage(error, fallback = "Tải file thất bạ
   return error?.message || fallback;
 }
 
+export async function completeTreeAndExport(resolutionId, recipientEmail = "ubnd@xa.gov.vn", tree = null) {
+  const payload = { resolutionId, recipientEmail };
+  if (tree) payload.tree = tree;
+  const res = await api.post(`/resolutions/${encodeURIComponent(resolutionId)}/complete-tree`, payload);
+  return res.data;
+}
+
+export function getExportDocxUrl(resolutionId) {
+  return `${API_ROOT}/api/resolutions/${encodeURIComponent(resolutionId)}/export-docx`;
+}
+
 export default api;

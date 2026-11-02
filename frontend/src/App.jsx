@@ -239,6 +239,7 @@ function Shell() {
               reviews={reviews}
               onGo={setView}
               onPickResolution={handlePickResolution}
+              onGo={setView}
             />
           )}
           {view === "upload" && (
@@ -274,6 +275,9 @@ function Shell() {
                       status: "pending_ban_review",
                     }))
                   );
+                } else {
+                  setNodes([]);
+                  setCreatedIndicators([]);
                 }
                 if (preview?.url) {
                   setResolutionPreview((prev) => {

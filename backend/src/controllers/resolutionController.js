@@ -9,6 +9,9 @@ const { ocrResolutionFile } = require('../services/ocrService');
 const { extractIndicatorsFromText } = require('../services/indicatorExtractor');
 const { saveNodeRecursive } = require('./indicatorController');
 const { writeAudit } = require('../services/auditService');
+const { generateResolutionDocx } = require('../services/docExportService');
+const { sendResolutionDocxEmail } = require('../services/mailService');
+const { syncToPostgres } = require('../config/postgres');
 
 /**
  * Chuyên viên HĐND upload PDF Nghị quyết, hệ thống OCR auto-fill.
@@ -34,7 +37,7 @@ async function uploadOcrResolution(req, res) {
     let confidence = 0;
     let engine = 'none';
     try {
-      const ocr = await ocrResolutionFile(buffer, mimetype);
+      const ocr = await ocrResolutionFile(buffer, mimetype, originalname);
       fields = ocr.fields;
       ocrRawText = ocr.ocrRawText;
       confidence = ocr.confidence;
@@ -45,17 +48,25 @@ async function uploadOcrResolution(req, res) {
 
     // 3. Cho phép Frontend override (khi chuyên viên sửa tay trước khi submit,
     //    hoặc gửi kèm ngay trong form upload)
-    if (req.body.codeNumber) fields.codeNumber = String(req.body.codeNumber);
-    if (req.body.title) fields.title = String(req.body.title);
-    if (req.body.signer) fields.signer = String(req.body.signer);
+    // 3. Cho phép Frontend override chỉ khi người dùng CHỦ ĐỘNG truyền isManualOverride="true"
+    // hoặc khi kết quả OCR bị trống:
+    if (req.body.isManualOverride === "true") {
+      if (req.body.codeNumber) fields.codeNumber = String(req.body.codeNumber);
+      if (req.body.title) fields.title = String(req.body.title);
+      if (req.body.signer) fields.signer = String(req.body.signer);
+    } else {
+      if (!fields.codeNumber && req.body.codeNumber) fields.codeNumber = String(req.body.codeNumber);
+      if (!fields.title && req.body.title) fields.title = String(req.body.title);
+      if (!fields.signer && req.body.signer) fields.signer = String(req.body.signer);
+    }
 
     // 4. Tạo document nháp trong Firestore
     const now = admin.firestore.Timestamp.now();
     const docRef = db.collection('resolutions').doc();
     const draft = {
       id: docRef.id,
-      codeNumber: fields.codeNumber || `DRAFT-${docRef.id.slice(0, 6).toUpperCase()}`,
-      title: fields.title || 'Nghị quyết (đang chờ hoàn thiện trích yếu)',
+      codeNumber: fields.codeNumber || `NQ-XA-${docRef.id.slice(0, 6).toUpperCase()}`,
+      title: fields.title || 'Nghị quyết HĐND xã (đang chờ hoàn thiện trích yếu)',
       issuanceDate: admin.firestore.Timestamp.fromDate(new Date(fields.issuanceDate)),
       signer: fields.signer || '',
       fileUrl,
@@ -321,10 +332,164 @@ async function banReviewResolution(req, res) {
   }
 }
 
+async function completeTreeAndExport(req, res) {
+  try {
+    const id = req.params.id || req.body.resolutionId;
+    if (!id) return res.status(400).json({ message: 'Thiếu resolutionId.' });
+
+    const docRef = db.collection('resolutions').doc(id);
+    const snap = await docRef.get();
+    if (!snap.exists) return res.status(404).json({ message: 'Không tìm thấy Nghị quyết.' });
+
+    const resData = { id: snap.id, ...snap.data() };
+    const recipientEmail = req.body.recipientEmail || process.env.UBND_EMAIL || 'ubnd@xa.gov.vn';
+
+    let indicators = [];
+    const indSnap = await db.collection('indicators').where('resolutionId', '==', id).get();
+    if (!indSnap.empty) {
+      indicators = indSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    } else if (Array.isArray(req.body.tree) && req.body.tree.length > 0) {
+      indicators = req.body.tree;
+    }
+
+    const docxBuffer = await generateResolutionDocx(resData, indicators);
+    const safeCode = (resData.codeNumber || id).replace(/[\/\\?%*:|"<>]/g, '_');
+    const fileName = `Phan_khai_chi_tieu_${safeCode}.docx`;
+
+    const mailResult = await sendResolutionDocxEmail({
+      to: recipientEmail,
+      resolution: resData,
+      totalIndicators: indicators.length,
+      docxBuffer,
+      filename: fileName,
+    });
+
+    const now = admin.firestore.Timestamp.now();
+    const nextStatus = 'pending_ban_review';
+    const updateData = {
+      status: nextStatus,
+      completedTreeAt: now,
+      completedTreeBy: req.user?.email || 'chuyen_vien',
+      docxFileName: fileName,
+      docxExportedAt: now,
+      emailSentTo: recipientEmail,
+      emailStatus: mailResult.success ? 'sent' : 'failed',
+      updatedAt: now,
+    };
+    if (mailResult.previewUrl) updateData.emailPreviewUrl = mailResult.previewUrl;
+    await docRef.update(updateData);
+
+    try {
+      await syncToPostgres(
+        { ...resData, ...updateData },
+        indicators,
+        {
+          fileName,
+          recipientEmail,
+          emailSent: mailResult.success,
+          exportedBy: req.user?.email || 'chuyen_vien',
+        }
+      );
+    } catch (pgErr) {
+      console.warn('[PostgreSQL] Bỏ qua lỗi đồng bộ PG:', pgErr.message);
+    }
+
+    await writeAudit({
+      action: 'complete_tree_and_export_docx',
+      userId: req.user?.uid || 'unknown',
+      userRole: req.user?.role || 'chuyen_vien',
+      resolutionId: id,
+      resolutionCodeNumber: resData.codeNumber,
+      sourceDocumentUrl: resData.fileUrl || '',
+      before: { status: resData.status },
+      after: { status: nextStatus, docxFileName: fileName, emailSentTo: recipientEmail },
+      message: `Chuyên viên hoàn thành cây chỉ tiêu NQ ${resData.codeNumber || id}, xuất file Word ${fileName} và gửi email thông báo đến ${recipientEmail}.`,
+    });
+
+    return res.json({
+      ok: true,
+      message: `Hoàn tất xử lý cây chỉ tiêu! Đã xuất file Word và gửi email thông báo thành công đến ${recipientEmail}.`,
+      data: {
+        id,
+        codeNumber: resData.codeNumber,
+        status: nextStatus,
+        fileName,
+        downloadUrl: `/api/resolutions/${id}/export-docx`,
+        recipientEmail,
+        emailResult: mailResult,
+        totalIndicators: indicators.length,
+      },
+    });
+  } catch (err) {
+    console.error('[complete-tree-and-export]', err);
+    return res.status(500).json({ message: 'Lỗi hoàn thành cây chỉ tiêu và xuất file.', detail: err.message });
+  }
+}
+
+async function exportResolutionDocx(req, res) {
+  try {
+    const { id } = req.params;
+    const snap = await db.collection('resolutions').doc(id).get();
+    if (!snap.exists) return res.status(404).json({ message: 'Không tìm thấy Nghị quyết.' });
+
+    const resData = { id: snap.id, ...snap.data() };
+    const indSnap = await db.collection('indicators').where('resolutionId', '==', id).get();
+    const indicators = indSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    const docxBuffer = await generateResolutionDocx(resData, indicators);
+    const rawCode = (resData.codeNumber || id).replace(/[\/\\?%*:|"<>]/g, '_');
+    const asciiCode = rawCode
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/Đ/g, 'D')
+      .replace(/[^a-zA-Z0-9_\-]/g, '_');
+    const asciiFileName = `Phan_khai_chi_tieu_${asciiCode}.docx`;
+    const utf8FileName = encodeURIComponent(`Phan_khai_chi_tieu_${rawCode}.docx`);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${asciiFileName}"; filename*=UTF-8''${utf8FileName}`);
+    return res.send(docxBuffer);
+  } catch (err) {
+    console.error('[export-docx]', err);
+    return res.status(500).json({ message: 'Lỗi xuất file Word.', detail: err.message });
+  }
+}
+
+
+/**
+ * Cập nhật thông tin nghị quyết (số hiệu, trích yếu, người ký, ngày ban hành)
+ */
+async function updateResolution(req, res) {
+  try {
+    const { id } = req.params;
+    const { codeNumber, title, signer, issuanceDate } = req.body;
+    const docRef = db.collection("resolutions").doc(id);
+    const snap = await docRef.get();
+    if (!snap.exists) return res.status(404).json({ message: "Không tìm thấy nghị quyết." });
+
+    const updateData = { updatedAt: admin.firestore.Timestamp.now() };
+    if (codeNumber !== undefined) updateData.codeNumber = String(codeNumber).trim();
+    if (title !== undefined) updateData.title = String(title).trim();
+    if (signer !== undefined) updateData.signer = String(signer).trim();
+    if (issuanceDate) updateData.issuanceDate = admin.firestore.Timestamp.fromDate(new Date(issuanceDate));
+
+    await docRef.update(updateData);
+    const updated = (await docRef.get()).data();
+    return res.json({ ok: true, data: { ...updated, id } });
+  } catch (err) {
+    console.error("[updateResolution]", err);
+    return res.status(500).json({ message: "Lỗi cập nhật nghị quyết.", detail: err.message });
+  }
+}
+
 module.exports = {
+  completeTreeAndExport,
+  exportResolutionDocx,
   uploadOcrResolution,
   listResolutions,
   getResolutionDetail,
   getResolutionFile,
   banReviewResolution,
+  updateResolution,
 };
