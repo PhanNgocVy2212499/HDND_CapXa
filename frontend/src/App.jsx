@@ -197,7 +197,23 @@ function Shell() {
     );
   }
 
-  if (!fbUser) return <Login />;
+  if (!fbUser) {
+    return (
+      <Layout
+        view={view}
+        onView={setView}
+        done={{}}
+        dark={dark}
+        onToggleDark={() => setDark((d) => !d)}
+        health={health}
+        onCheckHealth={onCheckHealth}
+        user={null}
+        onLogout={() => {}}
+      >
+        <Login />
+      </Layout>
+    );
+  }
 
   const done = {
     dashboard: false,
