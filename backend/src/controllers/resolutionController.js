@@ -5,7 +5,7 @@
  */
 const { admin, db, storage } = require('../config/firebaseAdmin');
 const { uploadBuffer, inferStoragePathFromUrl, serveStoredFile } = require('../services/storageService');
-const { ocrResolutionFile } = require('../services/ocrService');
+const { ocrResolutionFile, cleanAdministrativeWords } = require('../services/ocrService');
 const { extractIndicatorsFromText } = require('../services/indicatorExtractor');
 const { saveNodeRecursive } = require('./indicatorController');
 const { writeAudit } = require('../services/auditService');
@@ -81,32 +81,9 @@ async function uploadOcrResolution(req, res) {
     };
     await docRef.set(draft);
 
-    // 5. Tự tách chỉ tiêu từ văn bản OCR → khỏi nhập tay ở Cây chỉ tiêu.
-    // Thất bại thì bỏ qua êm (giữ NQ draft, chuyên viên nhập tay như cũ).
-    let extractedIndicators = [];
-    if (ocrRawText && ocrRawText.trim().length >= 50) {
-      try {
-        const base = new Date(fields.issuanceDate);
-        const baseMs = Number.isNaN(base.getTime()) ? Date.now() : base.getTime();
-        const defaultDeadline = new Date(baseMs + 90 * 86400000).toISOString().slice(0, 10);
-        const { tree } = extractIndicatorsFromText(ocrRawText, { defaultDeadline });
-        if (tree.length) {
-          const batch = db.batch();
-          const saved = [];
-          const ctx = { id: docRef.id, codeNumber: draft.codeNumber, fileUrl };
-          for (const node of tree) await saveNodeRecursive(batch, node, ctx, null, saved);
-          await batch.commit();
-          extractedIndicators = saved;
-          draft.status = 'pending_ban_review';
-          await docRef.update({
-            status: 'pending_ban_review',
-            updatedAt: admin.firestore.Timestamp.now(),
-          });
-        }
-      } catch (extractErr) {
-        console.warn('[upload-ocr] auto-extract bỏ qua:', extractErr.message);
-      }
-    }
+    // Quy trình mới: giúp việc soạn thảo (draft). Việc bóc tách chỉ tiêu thực hiện
+    // SAU KHI Thường trực ký ban hành, do bộ phận giúp việc thực hiện (không tự tách tại đây).
+    const extractedIndicators = [];
 
     // CSDL dùng chung: audit append-only + đóng dấu thời gian + gắn văn bản nguồn
     await writeAudit({
@@ -115,14 +92,14 @@ async function uploadOcrResolution(req, res) {
       resolutionId: docRef.id,
       action: 'create_resolution',
       actor: req.user,
-      after: { codeNumber: draft.codeNumber, title: draft.title, status: draft.status, extractedCount: extractedIndicators.length },
+      after: { codeNumber: draft.codeNumber, title: draft.title, status: draft.status, extractedCount: 0 },
       sourceFileUrl: fileUrl,
       sourceStoragePath: storagePath,
-      message: `Upload NQ ${draft.codeNumber} (engine ${engine})` + (extractedIndicators.length ? `, tự tách ${extractedIndicators.length} chỉ tiêu` : ''),
+      message: `Bộ phận giúp việc soạn thảo NQ ${draft.codeNumber} (engine ${engine})`,
     });
 
     return res.status(201).json({
-      message: 'Upload & OCR thành công. Đã tạo bản nháp, chuyên viên kiểm tra lại trước khi trình.',
+      message: 'Soạn thảo/OCR thành công. Đã tạo bản nháp, chờ Thường trực ký ban hành.',
       data: {
         ...draft,
         issuanceDate: draft.issuanceDate.toDate().toISOString(),
@@ -365,7 +342,8 @@ async function completeTreeAndExport(req, res) {
     });
 
     const now = admin.firestore.Timestamp.now();
-    const nextStatus = 'pending_ban_review';
+    const newFlow = ['issued', 'extracted', 'pending_distribution', 'distributed', 'pending_completion', 'completed', 'pending_issue'];
+    const nextStatus = newFlow.includes(resData.status) ? (resData.status === 'issued' ? 'pending_distribution' : resData.status) : 'pending_ban_review';
     const updateData = {
       status: nextStatus,
       completedTreeAt: now,
@@ -395,14 +373,15 @@ async function completeTreeAndExport(req, res) {
     }
 
     await writeAudit({
-      action: 'complete_tree_and_export_docx',
-      userId: req.user?.uid || 'unknown',
-      userRole: req.user?.role || 'chuyen_vien',
+      collection: 'resolutions',
+      docId: id,
       resolutionId: id,
-      resolutionCodeNumber: resData.codeNumber,
-      sourceDocumentUrl: resData.fileUrl || '',
+      action: 'complete_tree_and_export_docx',
+      actor: req.user,
       before: { status: resData.status },
-      after: { status: nextStatus, docxFileName: fileName, emailSentTo: recipientEmail },
+      after: { status: nextStatus, docxFileName: fileName, emailSentTo: recipientEmail, emailStatus: mailResult.success ? 'sent' : 'failed' },
+      sourceFileUrl: resData.fileUrl || '',
+      sourceStoragePath: resData.storagePath || '',
       message: `Chuyên viên hoàn thành cây chỉ tiêu NQ ${resData.codeNumber || id}, xuất file Word ${fileName} và gửi email thông báo đến ${recipientEmail}.`,
     });
 
@@ -483,6 +462,175 @@ async function updateResolution(req, res) {
   }
 }
 
+/** Bộ phận giúp việc trình Thường trực ký ban hành (draft/revision -> pending_issue) */
+async function submitForIssue(req, res) {
+  try {
+    const { id } = req.params;
+    const ref = db.collection('resolutions').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ message: 'Không tìm thấy nghị quyết.' });
+    const before = snap.data();
+    if (!['draft', 'revision_requested'].includes(before.status)) {
+      return res.status(400).json({ message: `Chỉ trình ký khi nghị quyết đang soạn thảo (trạng thái hiện tại: ${before.status}).` });
+    }
+    const now = admin.firestore.Timestamp.now();
+    await ref.update({ status: 'pending_issue', updatedAt: now });
+    await writeAudit({
+      collection: 'resolutions', docId: id, resolutionId: id, action: 'submit_for_issue',
+      actor: req.user, before: { status: before.status }, after: { status: 'pending_issue' },
+      sourceFileUrl: before.fileUrl || '', sourceStoragePath: before.storagePath || '',
+      message: `Bộ phận giúp việc trình Thường trực ký ban hành NQ ${before.codeNumber || id}`,
+    });
+    return res.json({ message: 'Đã trình Thường trực ký ban hành.', data: { id, status: 'pending_issue' } });
+  } catch (e) {
+    console.error('[submit-issue]', e);
+    return res.status(500).json({ message: 'Lỗi trình ký ban hành.', detail: e.message });
+  }
+}
+
+/** Thường trực ký ban hành nghị quyết (draft/pending_issue -> issued) */
+async function issueResolution(req, res) {
+  try {
+    const { id } = req.params;
+    const ref = db.collection('resolutions').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ message: 'Không tìm thấy nghị quyết.' });
+    const before = snap.data();
+    if (!['draft', 'pending_issue'].includes(before.status)) {
+      return res.status(400).json({ message: `Chỉ ký ban hành khi nghị quyết đang soạn thảo/chờ ký (trạng thái hiện tại: ${before.status}).` });
+    }
+    const now = admin.firestore.Timestamp.now();
+    await ref.update({
+      status: 'issued',
+      issuedAt: now,
+      issuedBy: req.user?.email || req.user?.uid || '',
+      updatedAt: now,
+    });
+    await writeAudit({
+      collection: 'resolutions', docId: id, resolutionId: id, action: 'issue_resolution',
+      actor: req.user, before: { status: before.status }, after: { status: 'issued' },
+      sourceFileUrl: before.fileUrl || '', sourceStoragePath: before.storagePath || '',
+      message: `Thường trực đã ký ban hành NQ ${before.codeNumber || id}. Chuyển về bộ phận giúp việc bóc tách chỉ tiêu.`,
+    });
+    return res.json({ message: 'Thường trực đã ký ban hành. Bộ phận giúp việc tiến hành bóc tách chỉ tiêu.', data: { id, status: 'issued' } });
+  } catch (e) {
+    console.error('[issue]', e);
+    return res.status(500).json({ message: 'Lỗi ký ban hành.', detail: e.message });
+  }
+}
+
+/** Bộ phận giúp việc đẩy lên Thường trực xác nhận hoàn thành (distributed -> pending_completion) */
+async function submitForCompletion(req, res) {
+  try {
+    const { id } = req.params;
+    const ref = db.collection('resolutions').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ message: 'Không tìm thấy nghị quyết.' });
+    const before = snap.data();
+    if (!['distributed', 'extracted', 'pending_distribution', 'issued', 'approved', 'pending_approval'].includes(before.status)) {
+      return res.status(400).json({ message: `Chưa thể đẩy lên xác nhận hoàn thành ở trạng thái hiện tại: ${before.status}.` });
+    }
+    const now = admin.firestore.Timestamp.now();
+    await ref.update({ status: 'pending_completion', submittedCompletionAt: now, updatedAt: now });
+    await writeAudit({
+      collection: 'resolutions', docId: id, resolutionId: id, action: 'submit_for_completion',
+      actor: req.user, before: { status: before.status }, after: { status: 'pending_completion' },
+      sourceFileUrl: before.fileUrl || '', sourceStoragePath: before.storagePath || '',
+      message: `Bộ phận giúp việc đẩy NQ ${before.codeNumber || id} lên Thường trực xác nhận hoàn thành`,
+    });
+    return res.json({ message: 'Đã đẩy lên Thường trực xác nhận hoàn thành.', data: { id, status: 'pending_completion' } });
+  } catch (e) {
+    console.error('[submit-completion]', e);
+    return res.status(500).json({ message: 'Lỗi đẩy lên xác nhận hoàn thành.', detail: e.message });
+  }
+}
+
+/** Thường trực xác nhận đã hoàn thành (pending_completion -> completed) */
+/** Bộ phận giúp việc tự bóc tách chỉ tiêu từ OCR (sau khi Thường trực ký ban hành) */
+async function extractIndicators(req, res) {
+  try {
+    const { id } = req.params;
+    const ref = db.collection('resolutions').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ message: 'Không tìm thấy nghị quyết.' });
+    const resData = snap.data();
+    if (!['issued', 'extracted', 'pending_distribution'].includes(resData.status)) {
+      return res.status(400).json({ message: `Chỉ bóc tách chỉ tiêu sau khi Thường trực ký ban hành (trạng thái: ${resData.status}).` });
+    }
+    // Re-clean OCR text để áp dụng các rule mới bổ sung (sửa lỗi dấu chữ)
+    const ocrRawText = cleanAdministrativeWords(resData.ocrRawText || '');
+    if (!ocrRawText.trim()) return res.status(400).json({ message: 'Nghị quyết không có nội dung OCR để bóc tách. Vui lòng nhập chỉ tiêu thủ công.' });
+
+    const base = resData.issuanceDate?.toDate?.() || new Date();
+    const baseMs = Number.isNaN(base.getTime()) ? Date.now() : base.getTime();
+    const defaultDeadline = new Date(baseMs + 90 * 86400000).toISOString().slice(0, 10);
+    const { tree, total } = extractIndicatorsFromText(ocrRawText, { defaultDeadline });
+    if (!tree.length) return res.status(400).json({ message: 'Không tự nhận diện được chỉ tiêu từ văn bản. Vui lòng nhập thủ công.' });
+
+    // Xóa chỉ tiêu cũ của NQ này (nếu có) rồi lưu kết quả bóc tách mới
+    const oldSnap = await db.collection('indicators').where('resolutionId', '==', id).get();
+    const batch = db.batch();
+    oldSnap.docs.forEach((d) => batch.delete(d.ref));
+    const saved = [];
+    const ctx = { id, codeNumber: resData.codeNumber || '', fileUrl: resData.fileUrl || '' };
+    for (const node of tree) await saveNodeRecursive(batch, node, ctx, null, saved);
+    const now = admin.firestore.Timestamp.now();
+    batch.update(ref, { status: 'pending_distribution', extractedAt: now, updatedAt: now });
+    await batch.commit();
+
+    await writeAudit({
+      collection: 'indicators', docId: id, resolutionId: id, action: 'extract_indicators',
+      actor: req.user, before: { status: resData.status }, after: { status: 'pending_distribution', count: saved.length },
+      sourceFileUrl: resData.fileUrl || '', sourceStoragePath: resData.storagePath || '',
+      message: `Bộ phận giúp việc bóc tách ${saved.length} chỉ tiêu từ OCR NQ ${resData.codeNumber || id}`,
+    });
+    return res.json({ message: `Đã bóc tách ${saved.length} chỉ tiêu. Kiểm tra và phân về các ban đúng với chỉ tiêu.`, indicators: saved, resolutionStatus: 'pending_distribution' });
+  } catch (e) {
+    console.error('[extract-indicators]', e);
+    return res.status(500).json({ message: 'Lỗi bóc tách chỉ tiêu.', detail: e.message });
+  }
+}
+
+async function confirmCompletion(req, res) {
+  try {
+    const { id } = req.params;
+    const ref = db.collection('resolutions').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ message: 'Không tìm thấy nghị quyết.' });
+    const before = snap.data();
+    if (before.status !== 'pending_completion' && before.status !== 'distributed') {
+      return res.status(400).json({ message: `Chỉ xác nhận hoàn thành khi đã được đẩy lên (trạng thái hiện tại: ${before.status}).` });
+    }
+    const now = admin.firestore.Timestamp.now();
+    await ref.update({
+      status: 'completed',
+      completedAt: now,
+      completedConfirmedBy: req.user?.email || req.user?.uid || '',
+      updatedAt: now,
+    });
+    // Đánh dấu chỉ tiêu đã phân bổ là hoàn tất xử lý (không ghi đè in_progress nếu đang theo dõi)
+    const indSnap = await db.collection('indicators').where('resolutionId', '==', id).get();
+    if (!indSnap.empty) {
+      const batch = db.batch();
+      indSnap.docs.forEach((d) => {
+        const st = d.data().status;
+        if (st !== 'in_progress') batch.update(d.ref, { status: 'completed', updatedAt: now });
+      });
+      await batch.commit();
+    }
+    await writeAudit({
+      collection: 'resolutions', docId: id, resolutionId: id, action: 'confirm_completion',
+      actor: req.user, before: { status: before.status }, after: { status: 'completed' },
+      sourceFileUrl: before.fileUrl || '', sourceStoragePath: before.storagePath || '',
+      message: `Thường trực xác nhận NQ ${before.codeNumber || id} đã hoàn thành`,
+    });
+    return res.json({ message: 'Thường trực đã xác nhận hoàn thành.', data: { id, status: 'completed' } });
+  } catch (e) {
+    console.error('[confirm-completion]', e);
+    return res.status(500).json({ message: 'Lỗi xác nhận hoàn thành.', detail: e.message });
+  }
+}
+
 module.exports = {
   completeTreeAndExport,
   exportResolutionDocx,
@@ -492,4 +640,9 @@ module.exports = {
   getResolutionFile,
   banReviewResolution,
   updateResolution,
+  submitForIssue,
+  issueResolution,
+  extractIndicators,
+  submitForCompletion,
+  confirmCompletion,
 };

@@ -28,6 +28,7 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
   // Reload/tab mới: props RAM trắng nhưng server vẫn có → tự tải lại để Tổng quan không bị xóa
   const [fetchedNodes, setFetchedNodes] = useState([]);
   const [fetchedReports, setFetchedReports] = useState([]);
+  const [allReviews, setAllReviews] = useState([]);
   const [selected, setSelected] = useState(null);
   // Tổng hợp nhiều nghị quyết: trước đây chỉ tải NQ đang mở nên thêm bao nhiêu NQ cũng thấy có 1
   const [allResolutions, setAllResolutions] = useState([]);
@@ -42,7 +43,9 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
     title: n.title,
     deadline: n.deadline || "",
     dept: n.assignedDepartments?.[0]?.departmentId || "ubnd-xa",
-    approved: ["assigned", "in_progress", "completed"].includes(n.status),
+    approved: ["assigned", "in_progress", "completed", "overdue"].includes(n.status),
+    alertLevel: n.alertLevel || null,
+    progressPercentage: n.progressPercentage ?? null,
     resolutionId: n.resolutionId || "",
     resolutionCodeNumber: n.resolutionCodeNumber || "",
   });
@@ -50,11 +53,13 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
   const loadAll = useCallback(async () => {
     try {
       setListLoading(true);
-      const [resRes, indRes, repRes] = await Promise.all([
+      const [resRes, indRes, repRes, revRes] = await Promise.all([
         api.get("/resolutions", { params: { limit: 30 } }).catch(() => null),
         api.get("/indicators", { params: { limit: 200 } }).catch(() => null),
         api.get("/reports", { params: { limit: 100 } }).catch(() => null),
+        api.get("/reviews", { params: { limit: 100 } }).catch(() => null),
       ]);
+      if (revRes?.data?.data) setAllReviews(revRes.data.data);
       const resolutions = resRes?.data?.data ?? [];
       if (resolutions.length) setAllResolutions(resolutions);
       if (indRes?.data?.data) {
@@ -121,7 +126,7 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
               title: n.title,
               deadline: n.deadline || "",
               dept: n.assignedDepartments?.[0]?.departmentId || "ubnd-xa",
-              approved: ["assigned", "in_progress", "completed"].includes(n.status),
+              approved: ["assigned", "in_progress", "completed", "overdue"].includes(n.status),
             }))
           );
         }
@@ -160,6 +165,12 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allReports, reports, fetchedReports, scope, resolution?.id]);
 
+  // Thẩm tra: ưu tiên dữ liệu server (mọi máy/tab), fallback lượt thẩm tra trong phiên
+  const reviewList = useMemo(
+    () => (allReviews.length > 0 ? allReviews : reviews || []),
+    [allReviews, reviews]
+  );
+
   const activeResolution = useMemo(() => {
     if (scope === "all") return null;
     return (
@@ -176,7 +187,7 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
       displayReports.length > 0
         ? Math.round(displayReports.reduce((s, r) => s + (Number(r.progressPercentage) || 0), 0) / displayReports.length)
         : 0;
-    const passed = reviews.filter((r) => r.status === "passed").length;
+    const passed = reviewList.filter((r) => r.status === "passed").length;
     const scopeHint =
       scope === "all"
         ? `${totalResolutions} văn bản trên server`
@@ -185,9 +196,9 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
       { icon: FileText, label: "NQ HĐND xã", value: String(totalResolutions), hint: scopeHint, tone: "text-sky-500" },
       { icon: ListTree, label: "Chỉ tiêu", value: String(displayNodes.length), hint: displayNodes.length ? `${displayNodes.filter((n) => !n.parent).length} nhóm gốc` : "Chưa dựng cây", tone: "text-emerald-500" },
       { icon: ClipboardList, label: "Báo cáo", value: String(displayReports.length), hint: displayReports.length ? `TB ${avg}% hoàn thành` : "Chưa có báo cáo", tone: "text-amber-500" },
-      { icon: MessagesSquare, label: "Thẩm tra đạt", value: String(passed), hint: `${reviews.length} lượt thẩm tra`, tone: "text-violet-500" },
+      { icon: MessagesSquare, label: "Thẩm tra đạt", value: String(passed), hint: `${reviewList.length} lượt thẩm tra`, tone: "text-violet-500" },
     ];
-  }, [resolution, activeResolution, totalResolutions, scope, displayNodes, displayReports, reviews]);
+  }, [resolution, activeResolution, totalResolutions, scope, displayNodes, displayReports, reviewList]);
 
   const overall = useMemo(() => {
     if (!displayReports.length) return 0;
@@ -217,7 +228,7 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
         return {
           ...n,
           left: n.left ?? daysLeft(n.deadline),
-          progress: last ? Number(last.progressPercentage) || 0 : 0,
+          progress: last ? Number(last.progressPercentage) || 0 : Number(n.progressPercentage) || 0,
           reportCount: list.length,
         };
       })
@@ -228,7 +239,8 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
     const red = [];
     const yellow = [];
     for (const n of displayNodes) {
-      const level = alertLevelFor(n.deadline);
+      // Ưu tiên alertLevel do cron backend gắn (đồng bộ mọi máy); thiếu thì tự tính như cũ
+      const level = n.alertLevel || alertLevelFor(n.deadline);
       if (level === "green") continue;
       const entry = { ...n, left: daysLeft(n.deadline) };
       (level === "red" ? red : yellow).push(entry);
@@ -249,9 +261,9 @@ export default function Dashboard({ resolution, nodes, reports, reviews, onGo, o
       },
       { id: "approve", label: "Thường trực duyệt", done: displayNodes.some((n) => n.approved) },
       { id: "report", label: "Báo cáo tiến độ", done: displayReports.length > 0 },
-      { id: "review", label: "Thẩm tra báo cáo", done: reviews.some((r) => r.status === "passed") },
+      { id: "review", label: "Thẩm tra báo cáo", done: reviewList.some((r) => r.status === "passed") },
     ],
-    [resolution, totalResolutions, allResolutions, displayNodes, displayReports, reviews]
+    [resolution, totalResolutions, allResolutions, displayNodes, displayReports, reviewList]
   );
 
   const scopeCounts = useMemo(() => {

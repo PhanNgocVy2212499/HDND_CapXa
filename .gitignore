@@ -20,3 +20,8 @@ npm-debug.log*
 Thumbs.db
 .vscode/*
 !.vscode/extensions.json
+
+# Python cache & heavy tessdata binaries
+__pycache__/
+*.py[cod]
+backend/tessdata/

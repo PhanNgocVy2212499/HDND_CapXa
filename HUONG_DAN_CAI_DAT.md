@@ -169,3 +169,4 @@ Hệ thống thiết kế theo quy trình khép kín với 4 vai trò chính:
 3. **Lỗi OCR tiếng Việt bị mất dấu hoặc không tìm thấy Tesseract:**
    - Kiểm tra đường dẫn cài đặt Tesseract trong `extract_pdf.py` hoặc thêm `Tesseract-OCR` vào biến `PATH`.
    - Kiểm tra xem file `vie.traineddata` đã nằm trong thư mục `tessdata` chưa.
+

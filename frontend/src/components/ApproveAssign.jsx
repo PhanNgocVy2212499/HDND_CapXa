@@ -1,13 +1,15 @@
 import { motion } from "framer-motion";
 import {
-  AlertTriangle,
   BadgeCheck,
   CalendarClock,
   CheckCircle2,
   Download,
+  ExternalLink,
+  FileText,
   ListTree,
-  ShieldAlert,
+  Maximize2,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import api, { getToken } from "../lib/api";
@@ -26,7 +28,7 @@ const toRows = (list) =>
     busy: false,
   }));
 
-export default function ApproveAssign({ role, resolution, indicators, onApproved, onPickResolution, onGo }) {
+export default function ApproveAssign({ resolution, indicators, onApproved, onPickResolution, onGo }) {
   const toast = useToast();
   const [rows, setRows] = useState(() => toRows(indicators));
   const [loading, setLoading] = useState(false);
@@ -34,6 +36,10 @@ export default function ApproveAssign({ role, resolution, indicators, onApproved
   const [manualDeadline, setManualDeadline] = useState("");
   const [resList, setResList] = useState([]);
   const [activeResId, setActiveResId] = useState(resolution?.id || "");
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError, setPdfError] = useState("");
+  const [pdfFullscreen, setPdfFullscreen] = useState(false);
   const activeResolution = resList.find((r) => r.id === activeResId) || resolution || null;
 
   useEffect(() => {
@@ -58,6 +64,57 @@ export default function ApproveAssign({ role, resolution, indicators, onApproved
   useEffect(() => {
     if (indicators?.length) setRows(toRows(indicators));
   }, [indicators]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const rid = activeResolution?.id;
+    setPdfUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return "";
+    });
+    setPdfError("");
+    if (!rid || !["draft", "pending_issue"].includes(activeResolution?.status)) {
+      setPdfLoading(false);
+      return undefined;
+    }
+
+    setPdfLoading(true);
+    api
+      .get(`/resolutions/${encodeURIComponent(rid)}/file`, { responseType: "blob" })
+      .then(({ data }) => {
+        if (cancelled) return;
+        if (!data?.size) throw new Error("File PDF rỗng.");
+        setPdfUrl(URL.createObjectURL(data));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setPdfError(error?.response?.data?.message || "Không tải được file PDF gốc.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPdfLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeResolution?.id, activeResolution?.status]);
+
+  useEffect(
+    () => () => {
+      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    },
+    [pdfUrl]
+  );
+
+  useEffect(() => {
+    if (!pdfFullscreen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setPdfFullscreen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pdfFullscreen]);
 
   // Tab mới / F5: props rỗng nhưng server vẫn có → tự tải lại theo resolutionId
   useEffect(() => {
@@ -110,29 +167,56 @@ export default function ApproveAssign({ role, resolution, indicators, onApproved
     }
   };
 
+  const st = activeResolution?.status || "";
+  const canIssue = ["draft", "pending_issue"].includes(st);
+  const canConfirmCompletion = ["pending_completion", "distributed"].includes(st);
   const canApprove =
-    activeResolution?.status === "pending_approval" ||
-    activeResolution?.status === "approved" ||
+    ["pending_approval", "approved", "issued", "extracted", "pending_distribution", "distributed"].includes(st) ||
     (!activeResolution && rows.length > 0);
 
+  const doIssue = async () => {
+    const rid = activeResId || activeResolution?.id;
+    if (!rid) return toast("error", "Chưa chọn nghị quyết.");
+    if (!getToken()) return toast("error", "Bạn đã bị đăng xuất — đăng nhập lại.");
+    try {
+      setLoading(true);
+      const { data } = await api.post(`/resolutions/${rid}/issue`);
+      toast("success", data.message || "Đã ký ban hành.");
+      onPickResolution?.({ ...(activeResolution || {}), id: rid, status: "issued" });
+      setResList((prev) => prev.map((r) => (r.id === rid ? { ...r, status: "issued" } : r)));
+    } catch (e) {
+      toast("error", e.response?.data?.message || "Không thể ký ban hành (cần quyền Thường trực).");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const doConfirmCompletion = async () => {
+    const rid = activeResId || activeResolution?.id;
+    if (!rid) return toast("error", "Chưa chọn nghị quyết.");
+    if (!getToken()) return toast("error", "Bạn đã bị đăng xuất — đăng nhập lại.");
+    try {
+      setLoading(true);
+      const { data } = await api.post(`/resolutions/${rid}/confirm-completion`);
+      toast("success", data.message || "Đã xác nhận hoàn thành.");
+      onPickResolution?.({ ...(activeResolution || {}), id: rid, status: "completed" });
+      setResList((prev) => prev.map((r) => (r.id === rid ? { ...r, status: "completed" } : r)));
+    } catch (e) {
+      toast("error", e.response?.data?.message || "Không thể xác nhận hoàn thành (cần quyền Thường trực).");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const approve = async (row, deadlineOverride) => {
-    if (activeResolution?.status === "pending_ban_review") {
-      return toast(
-        "error",
-        "Nghị quyết đang chờ Ban HĐND xã thẩm tra. Cần Ban HĐND đồng ý trước khi Thường trực phê duyệt."
-      );
+    if (st === "pending_ban_review") {
+      return toast("error", "Nghị quyết đang chờ thẩm tra (luồng cũ).");
     }
-    if (activeResolution?.status === "revision_requested") {
-      return toast(
-        "error",
-        "Nghị quyết đang bị Ban HĐND yêu cầu chỉnh sửa, chưa thể phê duyệt."
-      );
+    if (st === "revision_requested") {
+      return toast("error", "Nghị quyết đang bị yêu cầu chỉnh sửa.");
     }
-    if (activeResolution?.status === "draft") {
-      return toast(
-        "error",
-        "Nghị quyết còn ở trạng thái nháp, chưa gửi Ban HĐND thẩm tra."
-      );
+    if (st === "draft" || st === "pending_issue") {
+      return toast("error", "Nghị quyết chưa được Thường trực ký ban hành.");
     }
     const deadline = deadlineOverride ?? row.deadline;
     if (!deadline) return toast("error", `Chỉ tiêu "${row.title}" chưa có deadline.`);
@@ -146,17 +230,17 @@ export default function ApproveAssign({ role, resolution, indicators, onApproved
         ],
       });
       patchRow(row.id, { busy: false, approved: true });
-      toast("success", data.message || "Đã duyệt và giao việc.");
+      toast("success", data.message || "Đã cập nhật giao việc.");
       onApproved?.(row.id);
     } catch (e) {
       patchRow(row.id, { busy: false });
-      toast("error", e.response?.data?.message || "Phê duyệt thất bại — cần quyền Thường trực.");
+      toast("error", e.response?.data?.message || "Thao tác thất bại — kiểm tra quyền và trạng thái.");
     }
   };
 
   const approveAll = async () => {
     if (!canApprove) {
-      return toast("error", "Chưa đủ điều kiện duyệt — cần Ban HĐND xã đồng ý thông qua trước.");
+      return toast("error", "Chưa đủ điều kiện thực hiện thao tác này với trạng thái hiện tại.");
     }
     for (const r of rows.filter((r) => !r.approved)) {
       // eslint-disable-next-line no-await-in-loop
@@ -171,20 +255,20 @@ export default function ApproveAssign({ role, resolution, indicators, onApproved
       <Card className="xl:col-span-3">
         <CardHeader
           icon={BadgeCheck}
-          title="Phê duyệt & Giao việc cấp xã"
-          sub={activeResolution ? `${activeResolution.codeNumber} — ${rows.length} chỉ tiêu phân bổ cấp xã` : "Chọn nghị quyết HĐND cấp xã ở dưới để duyệt"}
+          title="Thường trực HĐND — Ký ban hành / Xác nhận"
+          sub={activeResolution ? `${activeResolution.codeNumber} — ${resolutionStatusLabel(activeResolution.status)}` : "Chọn nghị quyết để xử lý"}
           action={
             rows.length > 0 && (
               <Badge tone={doneCount === rows.length ? "emerald" : "amber"}>
-                {doneCount}/{rows.length} đã duyệt
+                {doneCount}/{rows.length} chỉ tiêu đã xử lý
               </Badge>
             )
           }
         />
         <div className="space-y-3 px-4 py-4">
-          <Field label="Nghị quyết HĐND cấp xã cần duyệt (Đồng bộ dữ liệu server)">
+          <Field label="Nghị quyết (đồng bộ server)">
             <Select value={activeResId} onChange={(e) => pickResolution(e.target.value)}>
-              <option value="">— Chọn Nghị quyết HĐND cấp xã —</option>
+              <option value="">— Chọn nghị quyết —</option>
               {resList.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.codeNumber} — {(r.title || "").slice(0, 50)} [{resolutionStatusLabel(r.status)}]
@@ -193,81 +277,105 @@ export default function ApproveAssign({ role, resolution, indicators, onApproved
             </Select>
           </Field>
 
-          {/* Thông báo hướng dẫn nếu đang đăng nhập role Ban HĐND */}
-          {role === "ban_hdnd" && (
+          {/* Quy trình mới: Thường trực ký ban hành */}
+          {activeResolution && canIssue && (
             <div className="flex items-start gap-3 rounded-xl border border-sky-300 bg-sky-50/90 p-3.5 text-xs text-sky-900 shadow-sm dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
               <ShieldCheck className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-400" />
               <div className="flex-1">
-                <p className="font-extrabold text-sky-900 dark:text-sky-200">
-                  Bạn đang đăng nhập vai trò: Ban HĐND xã
-                </p>
-                <p className="mt-0.5 leading-relaxed text-sky-800/90 dark:text-sky-300/90">
-                  Ban HĐND có thẩm quyền <b>Thẩm tra cây chỉ tiêu</b> (tại tab <b>Cây chỉ tiêu</b>) và <b>Thẩm tra báo cáo tiến độ</b> (tại tab <b>Thẩm tra</b>). Thẩm quyền <b>Phê duyệt & Giao việc</b> chính thức cho UBND tại tab này thuộc về <b>Thường trực HĐND</b> (Chủ tịch / Phó Chủ tịch).
-                </p>
-                {onGo && (
-                  <button
-                    type="button"
-                    onClick={() => onGo("tree")}
-                    className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 font-bold text-white shadow-sm hover:bg-sky-700 active:scale-95 transition-all"
-                  >
-                    Mở tab Cây chỉ tiêu để Thẩm tra &rarr;
-                  </button>
-                )}
+                <p className="font-extrabold">Chờ Thường trực ký ban hành</p>
+                <p className="mt-0.5 leading-relaxed">Xem lại file PDF nghị quyết bên dưới trước khi ký ban hành. Sau khi ký, nghị quyết được chuyển về bộ phận giúp việc để bóc tách chỉ tiêu.</p>
+                <div className="mt-3 overflow-hidden rounded-xl border border-sky-200 bg-white dark:border-sky-800 dark:bg-slate-950">
+                  <div className="flex items-center justify-between gap-2 border-b border-sky-100 px-3 py-2 dark:border-sky-900">
+                    <span className="flex min-w-0 items-center gap-2 font-bold">
+                      <FileText className="size-4 shrink-0" />
+                      <span className="truncate">{activeResolution.codeNumber || "Nghị quyết"} — PDF gốc</span>
+                    </span>
+                    {pdfUrl && (
+                      <div className="flex shrink-0 items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setPdfFullscreen(true)}
+                          className="inline-flex items-center gap-1 font-bold text-sky-700 hover:underline dark:text-sky-300"
+                        >
+                          <Maximize2 className="size-3.5" /> Xem toàn màn hình
+                        </button>
+                        <a
+                          href={pdfUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 font-bold text-sky-700 hover:underline dark:text-sky-300"
+                        >
+                          <ExternalLink className="size-3.5" /> Mở tab mới
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                  {pdfLoading ? (
+                    <div className="grid h-[32rem] place-items-center text-slate-500">Đang tải file PDF…</div>
+                  ) : pdfUrl ? (
+                    <iframe title="PDF nghị quyết chờ ký ban hành" src={pdfUrl} className="h-[28rem] w-full" />
+                  ) : (
+                    <div className="grid h-32 place-items-center px-4 text-center text-red-700 dark:text-red-300">
+                      {pdfError || "Nghị quyết chưa có file PDF gốc để xem."}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  className="mt-2 !py-1.5 !px-3 !text-xs"
+                  onClick={doIssue}
+                  disabled={loading || pdfLoading || !pdfUrl}
+                  title={!pdfUrl ? "Cần tải được file PDF gốc trước khi ký." : "Ký ban hành nghị quyết sau khi xem file PDF"}
+                >
+                  <CheckCircle2 className="size-3.5" /> {loading ? "Đang xử lý…" : "Ký ban hành nghị quyết"}
+                </Button>
               </div>
             </div>
           )}
 
-          {/* Trạng thái thẩm tra của Ban HĐND */}
-          {activeResolution?.status === "pending_ban_review" && (
-            <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50/90 p-3.5 text-xs text-amber-900 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-              <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
+          {activeResolution?.status === "issued" && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200">
               <div>
-                <p className="font-extrabold text-amber-900 dark:text-amber-200">
-                  Chưa thể duyệt — Đang chờ Ban HĐND xã thẩm tra
-                </p>
-                <p className="mt-0.5 leading-relaxed text-amber-800/90 dark:text-amber-300/90">
-                  Nghị quyết này đang chờ Ban HĐND xã thẩm tra cây chỉ tiêu. Theo quy trình, chỉ sau khi Ban HĐND đồng ý thông qua, Thường trực HĐND mới tiến hành ấn định deadline và giao việc.
-                </p>
-                {onGo && (
-                  <button
-                    type="button"
-                    onClick={() => onGo("tree")}
-                    className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white shadow-sm hover:bg-amber-700 active:scale-95 transition-all"
-                  >
-                    Sang tab Cây chỉ tiêu để Thẩm tra & Đồng ý thông qua &rarr;
-                  </button>
-                )}
+                <b>Đã ký ban hành.</b> Bộ phận giúp việc tiến hành bóc tách chỉ tiêu và phân về các ban.
               </div>
+              <Button
+                type="button"
+                className="!py-1.5 !px-3 !text-xs !bg-emerald-600 hover:!bg-emerald-700 !text-white"
+                onClick={() => onGo?.("tree")}
+              >
+                Chuyển sang Bóc tách chỉ tiêu →
+              </Button>
+            </div>
+          )}
+          {activeResolution && ["extracted", "pending_distribution", "distributed"].includes(activeResolution.status) && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-xs text-slate-800 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
+              Trạng thái: <b>{resolutionStatusLabel(activeResolution.status)}</b>. Bộ phận giúp việc sẽ đẩy lên để Thường trực xác nhận hoàn thành.
             </div>
           )}
 
-          {activeResolution?.status === "revision_requested" && (
-            <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-50/90 p-3.5 text-xs text-red-900 shadow-sm dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
-              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-600 dark:text-red-400" />
-              <div>
-                <p className="font-extrabold text-red-900 dark:text-red-200">
-                  Ban HĐND yêu cầu chỉnh sửa — Chưa thể phê duyệt
-                </p>
-                <p className="mt-0.5 leading-relaxed text-red-800/90 dark:text-red-300/90">
-                  Ý kiến của Ban: <b>"{activeResolution?.banReview?.comment || "Cần điều chỉnh"}"</b>. Đang chờ Chuyên viên cập nhật lại các chỉ tiêu.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {(activeResolution?.status === "pending_approval" || activeResolution?.status === "approved") && (
+          {/* Quy trình mới: Thường trực xác nhận hoàn thành */}
+          {activeResolution && canConfirmCompletion && (
             <div className="flex items-start gap-3 rounded-xl border border-emerald-300 bg-emerald-50/90 p-3.5 text-xs text-emerald-900 shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-              <ShieldCheck className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-              <div>
-                <p className="font-extrabold text-emerald-900 dark:text-emerald-200">
-                  Ban HĐND đã đồng ý thông qua — Đủ điều kiện phê duyệt & giao việc
-                </p>
-                <p className="mt-0.5 leading-relaxed text-emerald-800/90 dark:text-emerald-300/90">
-                  Ý kiến thẩm tra: <i>"{activeResolution?.banReview?.comment || "Đồng ý thông qua"}"</i>
-                  {activeResolution?.banReview?.reviewedBy ? ` (${activeResolution.banReview.reviewedBy})` : ""}.
-                  Thường trực kiểm tra hạn chót, đơn vị chịu trách nhiệm và bấm Duyệt.
-                </p>
+              <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <div className="flex-1">
+                <p className="font-extrabold">{activeResolution.status === "pending_completion" ? "Chờ Thường trực xác nhận hoàn thành" : "Sẵn sàng xác nhận hoàn thành"}</p>
+                <p className="mt-0.5 leading-relaxed">Bộ phận giúp việc đã hoàn tất xử lý và đẩy lên. Thường trực xác nhận nghị quyết đã hoàn thành.</p>
+                <Button type="button" className="mt-2 !py-1.5 !px-3 !text-xs !bg-emerald-600 hover:!bg-emerald-700" onClick={doConfirmCompletion} disabled={loading}>
+                  <ShieldCheck className="size-3.5" /> {loading ? "Đang xử lý…" : "Xác nhận đã hoàn thành"}
+                </Button>
               </div>
+            </div>
+          )}
+          {activeResolution?.status === "completed" && (
+            <div className="rounded-xl border border-emerald-300 bg-emerald-50/90 p-3 text-xs font-semibold text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+              Thường trực đã xác nhận nghị quyết hoàn thành.
+            </div>
+          )}
+
+          {/* Tương thích luồng cũ */}
+          {activeResolution?.status === "pending_ban_review" && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50/90 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+              Dữ liệu luồng cũ: đang chờ thẩm tra. {onGo && <button type="button" className="font-bold underline ml-1" onClick={() => onGo("tree")}>Mở Cây chỉ tiêu</button>}
             </div>
           )}
 
@@ -403,6 +511,45 @@ export default function ApproveAssign({ role, resolution, indicators, onApproved
           </Field>
         </div>
       </Card>
+      {pdfFullscreen && pdfUrl && (
+        <div
+          className="fixed inset-0 z-[60] flex flex-col bg-slate-950"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Xem toàn màn hình nghị quyết"
+        >
+          <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-700 bg-slate-900 px-4 text-white">
+            <div className="flex min-w-0 items-center gap-2 text-sm font-bold">
+              <FileText className="size-4 shrink-0 text-sky-300" />
+              <span className="truncate">
+                {activeResolution?.codeNumber || "Nghị quyết"} — Xem PDF trước khi ký ban hành
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <a
+                href={pdfUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs font-bold text-sky-300 hover:text-white"
+              >
+                <ExternalLink className="size-3.5" /> Mở tab mới
+              </a>
+              <button
+                type="button"
+                onClick={() => setPdfFullscreen(false)}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-bold hover:bg-slate-800"
+              >
+                <X className="size-3.5" /> Đóng
+              </button>
+            </div>
+          </div>
+          <iframe
+            title="PDF nghị quyết toàn màn hình"
+            src={pdfUrl}
+            className="min-h-0 flex-1 bg-slate-800"
+          />
+        </div>
+      )}
     </div>
   );
 }

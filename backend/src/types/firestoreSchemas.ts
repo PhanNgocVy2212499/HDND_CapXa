@@ -12,18 +12,26 @@ import type { Timestamp } from 'firebase-admin/firestore';
 
 /** Vai trò người dùng — lưu trong Firebase Auth Custom Claims: `role` */
 export type UserRole =
-  | 'chuyen_vien' // Chuyên viên HĐND: upload, OCR, dựng cây chỉ tiêu
-  | 'thuong_truc' // Thường trực HĐND: phê duyệt, giao việc, ấn định deadline
-  | 'co_quan_thuc_hien' // UBND xã / công chức: báo cáo tiến độ
-  | 'ban_hdnd'; // Các Ban HĐND: thẩm tra báo cáo
+  | 'giup_viec' // Bộ phận giúp việc: soạn thảo, bóc tách chỉ tiêu, phân chỉ tiêu, đẩy xác nhận hoàn thành
+  | 'chuyen_vien' // (tương thích ngược) ánh xạ sang giup_viec
+  | 'thuong_truc' // Thường trực HĐND: ký ban hành, xác nhận hoàn thành
+  | 'co_quan_thuc_hien' // Các ban/đơn vị thực hiện: nhận chỉ tiêu, báo cáo tiến độ
+  | 'ban_hdnd'; // Ban HĐND (tương thích/luồng cũ)
 
 export type ResolutionStatus =
-  | 'draft' // Vừa OCR xong, chuyên viên đang hoàn thiện
-  | 'pending_ban_review' // Chuyên viên dựng cây xong, gửi Ban HĐND thẩm tra
-  | 'revision_requested' // Ban HĐND yêu cầu chỉnh sửa cây chỉ tiêu
-  | 'pending_approval' // Ban HĐND đã đồng ý, chuyển Thường trực duyệt & giao việc
-  | 'approved' // Thường trực đã duyệt cây chỉ tiêu, bắt đầu triển khai
-  | 'completed'; // Mọi indicator đã hoàn thành / hết hiệu lực
+  | 'draft' // Bộ phận giúp việc đang soạn thảo
+  | 'pending_issue' // Đã trình Thường trực ký ban hành
+  | 'issued' // Thường trực đã ký ban hành -> quay lại giúp việc bóc tách chỉ tiêu
+  | 'extracted' // Đã bóc tách chỉ tiêu
+  | 'pending_distribution' // Đã bóc tách, chờ phân chỉ tiêu về các ban
+  | 'distributed' // Đã phân chỉ tiêu về các ban đúng với chỉ tiêu
+  | 'pending_completion' // Đã đẩy lên Thường trực xác nhận hoàn thành
+  | 'completed' // Thường trực đã xác nhận hoàn thành
+  // trạng thái luồng cũ (tương thích dữ liệu)
+  | 'pending_ban_review'
+  | 'revision_requested'
+  | 'pending_approval'
+  | 'approved';
 
 export type IndicatorStatus =
   | 'draft'
@@ -199,7 +207,13 @@ export interface Review {
 
 export type AuditAction =
   | 'create_resolution'
+  | 'submit_for_issue'
+  | 'issue_resolution'
+  | 'extract_indicators'
   | 'upsert_tree'
+  | 'distribute_indicators'
+  | 'submit_for_completion'
+  | 'confirm_completion'
   | 'ban_review_resolution'
   | 'approve_indicator'
   | 'submit_report'

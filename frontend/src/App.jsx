@@ -135,6 +135,21 @@ function Shell() {
     return () => clearInterval(timer);
   }, [fbUser]);
 
+  // Checklist "Thẩm tra báo cáo" phải phản ánh dữ liệu server (máy/tab khác),
+  // không chỉ các lượt thẩm tra tạo trong phiên hiện tại.
+  const [serverReviewPassed, setServerReviewPassed] = useState(false);
+  useEffect(() => {
+    if (!fbUser) {
+      setServerReviewPassed(false);
+      return;
+    }
+    api.get("/reviews", { params: { limit: 100 } })
+      .then(({ data }) =>
+        setServerReviewPassed((data?.data ?? []).some((r) => r.status === "passed"))
+      )
+      .catch(() => {});
+  }, [fbUser, reviews.length]);
+
   useEffect(() => {
     onCheckHealth();
   }, [onCheckHealth]);
@@ -202,10 +217,10 @@ function Shell() {
   const done = {
     dashboard: false,
     upload: !!resolution,
-    tree: nodes.length > 0,
-    approve: approvedIds.length > 0,
+    tree: nodes.length > 0 || ["extracted", "pending_distribution", "distributed", "pending_completion", "completed"].includes(resolution?.status),
+    approve: approvedIds.length > 0 || ["issued", "extracted", "pending_distribution", "distributed", "pending_completion", "completed"].includes(resolution?.status),
     report: reports.length > 0,
-    review: reviews.some((r) => r.status === "passed"),
+    review: reviews.some((r) => r.status === "passed") || serverReviewPassed,
   };
 
   return (
@@ -239,7 +254,6 @@ function Shell() {
               reviews={reviews}
               onGo={setView}
               onPickResolution={handlePickResolution}
-              onGo={setView}
             />
           )}
           {view === "upload" && (
@@ -319,6 +333,7 @@ function Shell() {
               indicators={createdIndicators}
               onApproved={(id) => setApprovedIds((prev) => [...prev, id])}
               onPickResolution={handlePickResolution}
+              onGo={setView}
             />
           )}
           {view === "report" && (

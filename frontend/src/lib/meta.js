@@ -48,12 +48,19 @@ export function alertLevelFor(deadline) {
 export const cx = (...parts) => parts.filter(Boolean).join(" ");
 
 export const RESOLUTION_STATUS_META = {
-  draft: { label: "Bản nháp", tone: "slate" },
-  pending_ban_review: { label: "Chờ Ban HĐND thẩm tra", tone: "amber" },
-  revision_requested: { label: "Ban HĐND yêu cầu sửa", tone: "red" },
-  pending_approval: { label: "Ban HĐND đã thông qua (Chờ duyệt)", tone: "sky" },
-  approved: { label: "Thường trực HĐND đã duyệt", tone: "emerald" },
-  completed: { label: "Hoàn thành", tone: "emerald" },
+  draft: { label: "Soạn thảo (Giúp việc)", tone: "slate" },
+  pending_issue: { label: "Chờ Thường trực ký ban hành", tone: "amber" },
+  issued: { label: "Đã ký ban hành", tone: "sky" },
+  extracted: { label: "Đã bóc tách chỉ tiêu", tone: "sky" },
+  pending_distribution: { label: "Chờ phân chỉ tiêu về các ban", tone: "amber" },
+  distributed: { label: "Đã phân chỉ tiêu về các ban", tone: "indigo" },
+  pending_completion: { label: "Chờ Thường trực xác nhận hoàn thành", tone: "amber" },
+  completed: { label: "Thường trực đã xác nhận hoàn thành", tone: "emerald" },
+  // tương thích dữ liệu cũ
+  pending_ban_review: { label: "Đã bóc tách (luồng cũ)", tone: "amber" },
+  revision_requested: { label: "Yêu cầu chỉnh sửa (luồng cũ)", tone: "red" },
+  pending_approval: { label: "Chờ xử lý (luồng cũ)", tone: "sky" },
+  approved: { label: "Đã xử lý (luồng cũ)", tone: "emerald" },
 };
 
 export const resolutionStatusLabel = (s) => RESOLUTION_STATUS_META[s]?.label || s || "—";

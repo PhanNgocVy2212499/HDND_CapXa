@@ -26,16 +26,22 @@ if (firebaseConfigured) {
 export { auth, onAuthStateChanged };
 
 export const ROLE_LABELS = {
-  chuyen_vien: "Chuyên viên",
-  thuong_truc: "Thường trực",
+  giup_viec: "Bộ phận giúp việc",
+  chuyen_vien: "Bộ phận giúp việc", // tương thích ngược
+  thuong_truc: "Thường trực HĐND",
   co_quan_thuc_hien: "Đơn vị thực hiện",
   ban_hdnd: "Ban HĐND",
 };
 
+function normalizeRole(role) {
+  if (role === "chuyen_vien") return "giup_viec";
+  return role ?? null;
+}
+
 export function roleFromToken(token) {
   try {
     const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(part)).role ?? null;
+    return normalizeRole(JSON.parse(atob(part)).role);
   } catch {
     return null;
   }

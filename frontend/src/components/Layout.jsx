@@ -17,12 +17,12 @@ import { useState } from "react";
 import { cx } from "../lib/meta";
 import { Badge, IconButton } from "./ui";
 
-/* Nghiệp vụ nội bộ HĐND */
+/* Nghiệp vụ nội bộ HĐND — quy trình mới */
 export const NAV = [
   { id: "dashboard", label: "Tổng quan", icon: LayoutDashboard },
-  { id: "upload", label: "Upload & OCR", icon: FileUp, role: "Chuyên viên" },
-  { id: "tree", label: "Cây chỉ tiêu", icon: ListTree, role: "Chuyên viên" },
-  { id: "approve", label: "Phê duyệt", icon: BadgeCheck, role: "Thường trực" },
+  { id: "upload", label: "Soạn thảo NQ", icon: FileUp, role: "Giúp việc" },
+  { id: "tree", label: "Bóc tách & Phân chỉ tiêu", icon: ListTree, role: "Giúp việc" },
+  { id: "approve", label: "Ký ban hành / Xác nhận", icon: BadgeCheck, role: "Thường trực" },
   { id: "report", label: "Báo cáo", icon: BarChart3, role: "Đơn vị" },
   { id: "review", label: "Thẩm tra", icon: MessagesSquare, role: "Các Ban" },
 ];

@@ -87,9 +87,7 @@ export default function UploadOcr({ resolution, onCreated, onGo }) {
       });
       toast(
         "success",
-        list.length
-          ? `OCR thành công — đã tự bóc tách ${list.length} chỉ tiêu từ văn bản nghị quyết.`
-          : "OCR xong — kiểm tra lại thông tin rồi chuyển sang bước Cây chỉ tiêu."
+        "Đã tạo bản soạn thảo nghị quyết. Kiểm tra thông tin rồi trình Thường trực ký ban hành."
       );
       onCreated?.(r, previewUrl ? { url: previewUrl, type: file?.type || "", name: file?.name || "" } : null, list);
     } catch (e) {
@@ -130,8 +128,8 @@ export default function UploadOcr({ resolution, onCreated, onGo }) {
       <Card>
         <CardHeader
           icon={CloudUpload}
-          title="Chọn file Nghị quyết HĐND cấp xã"
-          sub="PDF văn bản hoặc ảnh scan Nghị quyết HĐND cấp xã — kéo thả hoặc chọn file"
+          title="Soạn thảo nghị quyết (Bộ phận giúp việc)"
+          sub="Tải file PDF/ảnh nghị quyết để tạo bản soạn thảo — sau khi soạn thảo sẽ trình Thường trực ký ban hành"
           action={
             <Button
               type="button"
@@ -214,7 +212,7 @@ export default function UploadOcr({ resolution, onCreated, onGo }) {
           )}
 
           <Button onClick={submit} disabled={loading || !file} className="w-full">
-            {loading ? "Đang upload & OCR trích xuất chỉ tiêu cấp xã…" : "Upload & OCR Nghị quyết cấp xã"}
+            {loading ? "Đang upload & OCR…" : "Tạo bản soạn thảo nghị quyết"}
           </Button>
         </div>
       </Card>
@@ -291,46 +289,47 @@ export default function UploadOcr({ resolution, onCreated, onGo }) {
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="flex items-start gap-2.5 rounded-xl bg-emerald-600/[0.07] p-3 text-emerald-800 dark:text-emerald-200"
+                  className="space-y-2.5 rounded-xl bg-emerald-600/[0.07] p-3 text-emerald-800 dark:text-emerald-200"
                 >
-                  <FileCheck2 className="mt-0.5 size-4 shrink-0" />
-                  <div className="text-xs font-medium leading-relaxed">
-                    Đã lưu bản nháp Nghị quyết HĐND xã <b className="font-mono">{resolution.id}</b>.{" "}
-                    {extracted.length > 0 ? (
-                      <>
-                        Hệ thống đã tự bóc tách <b>{extracted.length} chỉ tiêu phân khai cấp xã</b> từ văn bản/phụ lục.{" "}
-                        <button
-                          onClick={() => onGo("tree")}
-                          className="font-bold underline underline-offset-2 transition-colors hover:text-emerald-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
-                        >
-                          Mở Cây chỉ tiêu
-                        </button>{" "}
-                        hoặc{" "}
-                        <button
-                          onClick={() => onGo("approve")}
-                          className="font-bold underline underline-offset-2 transition-colors hover:text-emerald-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
-                        >
-                          Sang Phê duyệt & Giao việc
-                        </button>{" "}
-                        cho các bộ phận công chức xã.
-                      </>
-                    ) : (
-                      <>
-                        Chưa tự nhận diện được danh sách chỉ tiêu chi tiết — sang bước{" "}
-                        <button
-                          onClick={() => onGo("tree")}
-                          className="font-bold underline underline-offset-2 transition-colors hover:text-emerald-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
-                        >
-                          Cây chỉ tiêu
-                        </button>{" "}
-                        để áp dụng mẫu chuẩn cấp xã hoặc thêm tay.
-                      </>
+                  <div className="flex items-start gap-2.5">
+                    <FileCheck2 className="mt-0.5 size-4 shrink-0" />
+                    <div className="text-xs font-medium leading-relaxed">
+                      Đã lưu bản soạn thảo <b className="font-mono">{resolution.codeNumber || resolution.id}</b>{" "}
+                      (trạng thái: <b>{resolution.status || "draft"}</b>).
+                      Theo quy trình mới: Thường trực ký ban hành trước, sau đó bộ phận giúp việc mới bóc tách chỉ tiêu.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(resolution.status === "draft" || !resolution.status) && (
+                      <Button
+                        type="button"
+                        className="!py-1.5 !px-3 !text-xs"
+                        onClick={async () => {
+                          try {
+                            const { data } = await api.post(`/resolutions/${resolution.id}/submit-issue`);
+                            toast("success", data.message || "Đã trình Thường trực ký ban hành.");
+                            onCreated?.({ ...resolution, status: "pending_issue" }, null, extracted);
+                          } catch (e) {
+                            toast("error", e.response?.data?.message || "Không thể trình ký ban hành.");
+                          }
+                        }}
+                      >
+                        Trình Thường trực ký ban hành
+                      </Button>
+                    )}
+                    {resolution.status === "issued" && (
+                      <Button type="button" className="!py-1.5 !px-3 !text-xs" onClick={() => onGo("tree")}>
+                        Bóc tách chỉ tiêu
+                      </Button>
+                    )}
+                    {resolution.status === "pending_issue" && (
+                      <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">Đang chờ Thường trực ký ban hành…</span>
                     )}
                   </div>
                 </motion.div>
               ) : (
                 <p className="text-xs font-medium leading-relaxed text-slate-600">
-                  Chưa có kết quả. Bạn có thể bấm <b>Nạp mẫu NQ 32 xã Châu Thành</b> ở góc trên hoặc kéo thả file nghị quyết cấp xã vào khung bên trái.
+                  Chưa có kết quả. Kéo thả file nghị quyết hoặc bấm <b>Nạp mẫu</b> để bắt đầu soạn thảo.
                 </p>
               )}
             </>

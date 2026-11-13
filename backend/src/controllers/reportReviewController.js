@@ -78,6 +78,12 @@ async function submitReview(req, res) {
     if (!progressReportId || !status) {
       return res.status(400).json({ message: 'Thiếu progressReportId / status.' });
     }
+    if (!['passed', 'need_clarification'].includes(status)) {
+      return res.status(400).json({ message: 'Trạng thái thẩm tra phải là "passed" (Đạt) hoặc "need_clarification" (Cần làm lại).' });
+    }
+    if (!comment || !String(comment).trim()) {
+      return res.status(400).json({ message: 'Nhận xét thẩm tra là bắt buộc (đối chiếu số liệu với minh chứng).' });
+    }
     const repSnap = await db.collection('progressReports').doc(progressReportId).get();
     if (!repSnap.exists) return res.status(404).json({ message: 'Báo cáo không tồn tại.' });
     const repData = repSnap.data();
@@ -92,7 +98,7 @@ async function submitReview(req, res) {
       resolutionId: repData.resolutionId || '',
       reviewedByUserId: req.user.uid,
       reviewerRole: req.user.role,
-      comment: comment || '',
+      comment: String(comment).trim(),
       status,
       reviewedAt: now,
     });
@@ -171,28 +177,27 @@ async function listReports(req, res) {
 }
 
 /**
- * GET /api/reviews?progressReportId=... — lịch sử thẩm tra 1 báo cáo.
+ * GET /api/reviews?progressReportId=...&limit=50
+ * - Có progressReportId: lịch sử thẩm tra 1 báo cáo (giữ nguyên).
+ * - Không có progressReportId: N lượt thẩm tra mới nhất toàn hệ thống
+ *   (để Dashboard tổng hợp mà không cần gọi N lần theo từng báo cáo).
+ * Mọi role đăng nhập đều xem được.
  */
 async function listReviews(req, res) {
   try {
     const { progressReportId } = req.query;
-    if (!progressReportId) return res.status(400).json({ message: 'Thiếu progressReportId.' });
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
     let docs = [];
     try {
-      const snap = await db
-        .collection('reviews')
-        .where('progressReportId', '==', progressReportId)
-        .orderBy('reviewedAt', 'desc')
-        .limit(50)
-        .get();
+      let q = db.collection('reviews');
+      if (progressReportId) q = q.where('progressReportId', '==', progressReportId);
+      const snap = await q.orderBy('reviewedAt', 'desc').limit(limit).get();
       docs = snap.docs;
     } catch (indexErr) {
       console.warn('[reviews] thiếu index, fallback sort tay:', indexErr.message);
-      const snap = await db
-        .collection('reviews')
-        .where('progressReportId', '==', progressReportId)
-        .limit(50)
-        .get();
+      let q = db.collection('reviews');
+      if (progressReportId) q = q.where('progressReportId', '==', progressReportId);
+      const snap = await q.limit(limit).get();
       docs = snap.docs.sort((a, b) => {
         const ta = a.data().reviewedAt?.toDate?.()?.getTime() ?? 0;
         const tb = b.data().reviewedAt?.toDate?.()?.getTime() ?? 0;
@@ -203,6 +208,9 @@ async function listReviews(req, res) {
       const v = d.data();
       return {
         id: v.id,
+        progressReportId: v.progressReportId || '',
+        indicatorId: v.indicatorId || '',
+        resolutionId: v.resolutionId || '',
         status: v.status,
         comment: v.comment || '',
         reviewerRole: v.reviewerRole || '',

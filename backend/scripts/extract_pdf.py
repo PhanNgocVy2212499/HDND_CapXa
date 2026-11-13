@@ -32,6 +32,27 @@ def find_tesseract():
         return which
     return None
 
+def ensure_tessdata_env():
+    # Tự động tìm thư mục tessdata chứa vie.traineddata nếu chưa được cấu hình
+    current_prefix = os.environ.get('TESSDATA_PREFIX', '')
+    if current_prefix and os.path.isfile(os.path.join(current_prefix, 'vie.traineddata')):
+        return current_prefix
+    
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(script_dir, '..', 'tessdata'),
+        os.path.join(script_dir, '..', '..', 'backend', 'tessdata'),
+        r'c:\Users\hie\Downloads\TTNN\backend\tessdata',
+        r'C:\Program Files\Tesseract-OCR\tessdata',
+        r'D:\Tesseract\tessdata',
+    ]
+    for c in candidates:
+        if os.path.isfile(os.path.join(c, 'vie.traineddata')):
+            norm = os.path.abspath(c)
+            os.environ['TESSDATA_PREFIX'] = norm
+            return norm
+    return current_prefix
+
 def extract_with_pymupdf(pdf_path):
     import pymupdf
 
@@ -67,6 +88,7 @@ def extract_with_pymupdf(pdf_path):
         }
 
     # Nếu là PDF scan hoặc PDF có lớp OCR tiếng Anh bị rụng dấu (scanner ASCII layer)
+    ensure_tessdata_env()
     tess_path = find_tesseract()
     if not tess_path:
         # Nếu không có tesseract, trả về text thô trích xuất được

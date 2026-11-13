@@ -37,7 +37,7 @@ const SKIP_PATTERNS = [
 ];
 
 const LINE_PATTERNS = [
-  { re: /^đi[eê]u\s+\d+\s*[:.\-–]?\s*(.+)$/i, depthOf: () => 0 },
+  { re: /^đi[eêềểễệế]u\s+\d+\s*[:.\-–]?\s*(.+)$/i, depthOf: () => 0 },
   { re: /^dieu\s+\d+\s*[:.\-–]?\s*(.+)$/i, depthOf: () => 0 }, // OCR mất dấu
   { re: /^(\d+(?:\.\d+)+)\s*[.)\]:\-–]?\s*(.+)$/, depthOf: (m) => m[1].split('.').length - 1 },
   { re: /^kho[ảa]n\s+(\d+)\s*[:.\-–]?\s*(.+)$/i, depthOf: () => 1 },
@@ -78,11 +78,17 @@ function parseTarget(text) {
   while ((m = re.exec(text)) !== null) {
     const val = normNumber(m[1]);
     const hasUnit = Boolean(m[2]);
-    if (!hasUnit && val >= 1990 && val <= 2099) continue;
+    // Bỏ qua số năm (ví dụ: năm 2026, khóa 2026-2031)
+    const prevText = text.slice(Math.max(0, m.index - 12), m.index).toLowerCase();
+    if (val >= 1990 && val <= 2099 && (prevText.includes('năm') || prevText.includes('khóa') || !hasUnit)) {
+      continue;
+    }
     cands.push(m);
   }
 
+  // Ưu tiên đơn vị tiền tệ hoặc con số rõ ràng
   const pick =
+    cands.find((c) => c[2] && ['tỷ đồng', 'triệu đồng', 'đồng', '%', 'người', 'công trình', 'trường'].includes(normUnit(c[2]))) ||
     cands.find((c) => c[2] && normUnit(c[2]) !== '') ||
     cands.find((c) => normNumber(c[1]) > 0) ||
     cands[0];
@@ -120,10 +126,31 @@ function inferDepartment(text) {
 }
 
 function extractIndicatorsFromText(rawText, opts = {}) {
-  const lines = String(rawText || '')
+  const rawLines = String(rawText || '')
     .split(/\r?\n/)
     .map((l) => l.replace(/\s+/g, ' ').trim())
-    .filter((l) => l.length >= MIN_LINE);
+    .filter((l) => l.length > 0);
+
+  // Ghép các dòng bị ngắt câu do định dạng trang OCR (ví dụ: dòng sau của Điều/Khoản)
+  const lines = [];
+  const startPattern = /^(?:đi[eêềểễệế]u\s+\d+|dieu\s+\d+|kho[ảa]n\s+\d+|\d+(?:\.\d+)+|\d+\s*[.)\]]|[-•*–+])/i;
+  for (let i = 0; i < rawLines.length; i++) {
+    let line = rawLines[i];
+    if (startPattern.test(line)) {
+      while (
+        i + 1 < rawLines.length &&
+        rawLines[i + 1].length >= 3 &&
+        !startPattern.test(rawLines[i + 1]) &&
+        !/^(?:quyết\s*nghị|phụ\s*lục|nơi\s*nhận|căn\s*cứ)/i.test(rawLines[i + 1])
+      ) {
+        i++;
+        line += ' ' + rawLines[i];
+      }
+    }
+    if (line.length >= MIN_LINE) {
+      lines.push(line);
+    }
+  }
 
   const items = [];
   let inNoiNhan = false;

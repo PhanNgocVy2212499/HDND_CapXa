@@ -97,8 +97,11 @@ export async function completeTreeAndExport(resolutionId, recipientEmail = "ubnd
   return res.data;
 }
 
+// Route /resolutions/:id/export-docx yêu cầu đăng nhập → đính kèm Firebase ID Token
+// (auth.js backend chấp nhận ?token=), khớp mẫu link tải PDF gốc đang dùng.
 export function getExportDocxUrl(resolutionId) {
-  return `${API_ROOT}/api/resolutions/${encodeURIComponent(resolutionId)}/export-docx`;
+  const t = encodeURIComponent(getToken() || "");
+  return `${API_ROOT}/api/resolutions/${encodeURIComponent(resolutionId)}/export-docx?token=${t}`;
 }
 
 export default api;

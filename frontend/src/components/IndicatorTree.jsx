@@ -91,6 +91,7 @@ export default function IndicatorTree({
   const toast = useToast();
   const [nodes, setNodes] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [autoExtracting, setAutoExtracting] = useState(false);
   const [leftTab, setLeftTab] = useState("pdf"); // pdf | text
   const [resList, setResList] = useState([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
@@ -260,11 +261,12 @@ export default function IndicatorTree({
         resolutionId: resolution.id,
         tree: toNested(nodes),
       });
-      toast("success", data.message || "Đã lưu cây chỉ tiêu và gửi Ban HĐND xã thẩm tra.");
+      const nextStatus = data.resolutionStatus || "pending_distribution";
+      toast("success", data.message || "Đã bóc tách và lưu chỉ tiêu.");
       onSubmitted?.(nodes, data.indicators ?? []);
-      onResolutionUpdated?.({ ...resolution, status: "pending_ban_review" });
+      onResolutionUpdated?.({ ...resolution, status: nextStatus });
       setResList((prev) =>
-        prev.map((r) => (r.id === resolution.id ? { ...r, status: "pending_ban_review" } : r))
+        prev.map((r) => (r.id === resolution.id ? { ...r, status: nextStatus } : r))
       );
       // Nạp lại cây từ server để khóa local thành id server — sửa tiếp không bị tạo trùng
       const fresh = await loadSaved(true);
@@ -304,6 +306,63 @@ export default function IndicatorTree({
       toast("error", e.response?.data?.message || "Thẩm tra thất bại.");
     } finally {
       setReviewingBan(false);
+    }
+  };
+
+  const handleDistribute = async () => {
+    if (!resolution?.id) return;
+    if (!getToken()) return toast("error", "Bạn đã bị đăng xuất — đăng nhập lại để tiếp tục.");
+    if (nodes.length === 0) return toast("error", "Chưa có chỉ tiêu để phân. Hãy bóc tách trước.");
+    try {
+      setSaving(true);
+      // Lưu lại cây (đảm bảo ban/đơn vị đã chọn được lưu) rồi phân phối
+      await api.post("/indicators/tree", { resolutionId: resolution.id, tree: toNested(nodes) });
+      const { data } = await api.post(`/resolutions/${encodeURIComponent(resolution.id)}/distribute-indicators`);
+      toast("success", data.message || "Đã phân chỉ tiêu về các ban.");
+      const nextStatus = data.data?.status || "distributed";
+      onResolutionUpdated?.({ ...resolution, status: nextStatus });
+      setResList((prev) => prev.map((r) => (r.id === resolution.id ? { ...r, status: nextStatus } : r)));
+      await loadSaved(true);
+    } catch (e) {
+      toast("error", e.response?.data?.message || "Phân chỉ tiêu thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSubmitCompletion = async () => {
+    if (!resolution?.id) return;
+    if (!getToken()) return toast("error", "Bạn đã bị đăng xuất — đăng nhập lại để tiếp tục.");
+    try {
+      setSaving(true);
+      const { data } = await api.post(`/resolutions/${encodeURIComponent(resolution.id)}/submit-completion`);
+      toast("success", data.message || "Đã đẩy lên Thường trực xác nhận hoàn thành.");
+      onResolutionUpdated?.({ ...resolution, status: "pending_completion" });
+      setResList((prev) => prev.map((r) => (r.id === resolution.id ? { ...r, status: "pending_completion" } : r)));
+    } catch (e) {
+      toast("error", e.response?.data?.message || "Không thể đẩy lên xác nhận hoàn thành.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAutoExtract = async () => {
+    if (!resolution?.id) return;
+    if (!getToken()) return toast("error", "Bạn đã bị đăng xuất — đăng nhập lại để tiếp tục.");
+    try {
+      setAutoExtracting(true);
+      const { data } = await api.post(`/resolutions/${encodeURIComponent(resolution.id)}/extract-indicators`);
+      if (Array.isArray(data.indicators) && data.indicators.length > 0) {
+        setNodes(serverToFlat(data.indicators));
+      }
+      toast("success", `${data.message || "Đã bóc tách chỉ tiêu từ OCR."} Bạn có thể sửa trực tiếp trên bảng rồi lưu lại.`);
+      const nextStatus = data.resolutionStatus || "pending_distribution";
+      onResolutionUpdated?.({ ...resolution, status: nextStatus });
+      setResList((prev) => prev.map((r) => (r.id === resolution.id ? { ...r, status: nextStatus } : r)));
+    } catch (e) {
+      toast("error", e.response?.data?.message || "Không thể tự bóc tách (kiểm tra OCR hoặc trạng thái).");
+    } finally {
+      setAutoExtracting(false);
     }
   };
 
@@ -432,113 +491,86 @@ export default function IndicatorTree({
         </Badge>
       </div>
 
-      {/* Trạng thái quy trình Ban HĐND thẩm tra */}
+      {/* Quy trình mới */}
+      {(resolution.status === "draft" || resolution.status === "pending_issue") && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-xs shadow-sm dark:border-amber-900/60 dark:bg-amber-950/40">
+          <p className="font-extrabold text-amber-900 dark:text-amber-200">Chờ Thường trực ký ban hành</p>
+          <p className="mt-1 text-amber-800/90 dark:text-amber-300/90">
+            Nghị quyết đang ở bước soạn thảo. Thường trực cần ký ban hành trước, sau đó bộ phận giúp việc mới bóc tách chỉ tiêu.
+          </p>
+          <Button onClick={() => onGo("approve")} className="mt-2 !px-3 !py-1.5 !text-xs">Sang tab Ký ban hành →</Button>
+        </div>
+      )}
+      {resolution.status === "issued" && (
+        <div className="rounded-2xl border border-sky-300 bg-sky-50/90 p-4 text-xs shadow-sm dark:border-sky-900/60 dark:bg-sky-950/40">
+          <p className="font-extrabold text-sky-900 dark:text-sky-200">Đã ký ban hành — Bóc tách chỉ tiêu</p>
+          <p className="mt-1 text-sky-800/90 dark:text-sky-300/90">
+            Thường trực đã ký ban hành. Bộ phận giúp việc bóc tách chỉ tiêu từ nghị quyết, kiểm tra/sửa rồi bấm <b>"Lưu bóc tách chỉ tiêu"</b>.
+          </p>
+        </div>
+      )}
+      {(resolution.status === "extracted" || resolution.status === "pending_distribution") && (
+        <div className="rounded-2xl border border-indigo-300 bg-indigo-50/90 p-4 text-xs shadow-sm dark:border-indigo-900/60 dark:bg-indigo-950/40">
+          <p className="font-extrabold text-indigo-900 dark:text-indigo-200">Đã bóc tách — Phân chỉ tiêu về các ban</p>
+          <p className="mt-1 text-indigo-800/90 dark:text-indigo-300/90">
+            Kiểm tra cột <b>Phòng ban/Đơn vị</b> của từng chỉ tiêu cho đúng, sau đó bấm <b>"Phân chỉ tiêu về các ban"</b>.
+          </p>
+        </div>
+      )}
+      {resolution.status === "distributed" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-300 bg-emerald-50/90 p-4 text-xs shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
+          <div>
+            <p className="font-extrabold text-emerald-900 dark:text-emerald-200">Đã phân chỉ tiêu về các ban</p>
+            <p className="mt-1 text-emerald-800/90 dark:text-emerald-300/90">Các chỉ tiêu đã được phân về đúng ban. Bộ phận giúp việc đẩy lên Thường trực xác nhận hoàn thành.</p>
+          </div>
+          <Button onClick={handleSubmitCompletion} disabled={saving} className="!px-3 !py-1.5 !text-xs !bg-emerald-600 hover:!bg-emerald-700 !text-white">
+            <Send className="size-3.5 mr-1" /> {saving ? "Đang gửi…" : "Đẩy lên Thường trực xác nhận"}
+          </Button>
+        </div>
+      )}
+      {resolution.status === "pending_completion" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-xs shadow-sm dark:border-amber-900/60 dark:bg-amber-950/40">
+          <p className="font-semibold text-amber-900 dark:text-amber-200">Đã đẩy lên Thường trực — chờ xác nhận hoàn thành.</p>
+          <Button onClick={() => onGo("approve")} className="!px-3 !py-1.5 !text-xs">Sang tab Xác nhận →</Button>
+        </div>
+      )}
+      {resolution.status === "completed" && (
+        <div className="rounded-2xl border border-emerald-300 bg-emerald-50/90 p-3.5 text-xs font-semibold text-emerald-900 shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+          <ShieldCheck className="mr-1.5 inline size-4" /> Thường trực đã xác nhận nghị quyết hoàn thành.
+        </div>
+      )}
+
+      {/* Tương thích luồng cũ */}
       {resolution.status === "pending_ban_review" && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-xs shadow-sm dark:border-amber-900/60 dark:bg-amber-950/40">
           <div className="flex items-start gap-3">
             <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
             <div>
-              <p className="font-extrabold text-amber-900 dark:text-amber-200">
-                Đang chờ Ban HĐND xã thẩm tra cây chỉ tiêu
-              </p>
-              <p className="mt-0.5 leading-relaxed text-amber-800/90 dark:text-amber-300/90">
-                Chuyên viên đã gửi cây chỉ tiêu cho Ban HĐND xã. Sau khi Ban HĐND đồng ý thông qua, Nghị quyết mới được chuyển sang Thường trực để phê duyệt & giao việc.
-              </p>
+              <p className="font-extrabold text-amber-900 dark:text-amber-200">Luồng cũ: Đang chờ Ban HĐND thẩm tra</p>
+              <p className="mt-0.5 text-amber-800/90 dark:text-amber-300/90">Dữ liệu tạo theo quy trình cũ. Có thể dùng khung thẩm tra bên dưới (nếu có quyền).</p>
             </div>
           </div>
-          {(role === "ban_hdnd" || role === "thuong_truc") && (
-            <Badge tone="amber">Bạn có quyền thẩm tra bên dưới</Badge>
-          )}
         </div>
       )}
-
       {resolution.status === "revision_requested" && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-300 bg-red-50/90 p-4 text-xs shadow-sm dark:border-red-900/60 dark:bg-red-950/40">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-600 dark:text-red-400" />
-            <div>
-              <p className="font-extrabold text-red-900 dark:text-red-200">
-                Ban HĐND yêu cầu chỉnh sửa cây chỉ tiêu
-              </p>
-              <p className="mt-0.5 leading-relaxed text-red-800/90 dark:text-red-300/90">
-                Ý kiến Ban: <b>"{resolution.banReview?.comment || "Chưa phù hợp"}"</b>
-                {resolution.banReview?.reviewedBy ? ` (${resolution.banReview.reviewedBy})` : ""}.
-                Chuyên viên hãy chỉnh sửa các chỉ tiêu bên dưới rồi bấm <b>"Lưu & Gửi Ban HĐND thẩm tra"</b>.
-              </p>
-            </div>
-          </div>
+        <div className="rounded-2xl border border-red-300 bg-red-50/90 p-4 text-xs shadow-sm dark:border-red-900/60 dark:bg-red-950/40">
+          <p className="font-extrabold text-red-900 dark:text-red-200">Luồng cũ: Yêu cầu chỉnh sửa</p>
+          <p className="mt-0.5 text-red-800/90 dark:text-red-300/90">Ý kiến: <b>"{resolution.banReview?.comment || "Chưa phù hợp"}"</b></p>
         </div>
       )}
-
-      {resolution.status === "pending_approval" && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-300 bg-sky-50/90 p-4 text-xs shadow-sm dark:border-sky-900/60 dark:bg-sky-950/40">
-          <div className="flex items-start gap-3">
-            <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-400" />
-            <div>
-              <p className="font-extrabold text-sky-900 dark:text-sky-200">
-                Ban HĐND đã đồng ý thông qua — Sẵn sàng chuyển Thường trực
-              </p>
-              <p className="mt-0.5 leading-relaxed text-sky-800/90 dark:text-sky-300/90">
-                Ý kiến thẩm tra: <i>"{resolution.banReview?.comment || "Đồng ý"}"</i>
-                {resolution.banReview?.reviewedBy ? ` (${resolution.banReview.reviewedBy})` : ""}.
-                Nghị quyết đã được chuyển sang Thường trực để phê duyệt & giao việc.
-              </p>
-            </div>
-          </div>
-          <Button onClick={() => onGo("approve")} className="!px-3 !py-1.5 !text-xs">
-            Sang tab Phê duyệt →
-          </Button>
-        </div>
-      )}
-
-      {resolution.status === "approved" && (
-        <div className="flex items-center gap-3 rounded-2xl border border-emerald-300 bg-emerald-50/90 p-3.5 text-xs text-emerald-900 shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-          <ShieldCheck className="size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-          <p className="font-semibold leading-relaxed">
-            <b>Thường trực HĐND đã phê duyệt & giao việc:</b> Các chỉ tiêu đã có đơn vị chủ trì và hạn hoàn thành, sẵn sàng tiếp nhận báo cáo tiến độ.
-          </p>
-        </div>
-      )}
-
-      {/* Khung thao tác thẩm tra nhanh dành riêng cho Ban HĐND (hoặc Thường trực) */}
-      {(role === "ban_hdnd" || role === "thuong_truc") && (
+      {(role === "ban_hdnd" || role === "thuong_truc") && ["pending_ban_review", "revision_requested"].includes(resolution.status) && (
         <Card className="border-amber-300/80 bg-amber-50/40 dark:border-amber-900/60 dark:bg-amber-950/20">
-          <CardHeader
-            icon={ShieldCheck}
-            title="Thẩm tra cây chỉ tiêu (Dành cho Ban HĐND)"
-            sub="Đối chiếu chỉ tiêu bên phải với văn bản gốc bên trái trước khi chuyển Thường trực duyệt"
-            action={
-              <Badge tone={resolution.status === "pending_approval" ? "emerald" : "amber"}>
-                {resolution.status === "pending_approval" ? "Đã thông qua" : "Cần thẩm tra"}
-              </Badge>
-            }
-          />
+          <CardHeader icon={ShieldCheck} title="Thẩm tra (luồng cũ)" sub="Dành cho dữ liệu quy trình cũ" />
           <div className="space-y-3 px-4 py-3">
-            <Field label="Ý kiến / Nhận xét thẩm tra của Ban HĐND">
-              <TextArea
-                value={banComment}
-                onChange={(e) => setBanComment(e.target.value)}
-                placeholder="Nhập ý kiến thẩm tra: số lượng chỉ tiêu có đầy đủ, con số kế hoạch có khớp văn bản, tính khả thi..."
-                rows={2}
-              />
+            <Field label="Ý kiến thẩm tra">
+              <TextArea value={banComment} onChange={(e) => setBanComment(e.target.value)} rows={2} placeholder="Nhập ý kiến…" />
             </Field>
             <div className="flex flex-wrap gap-2">
-              <Button
-                onClick={() => handleBanReview("approved")}
-                disabled={reviewingBan}
-                className="!bg-emerald-600 hover:!bg-emerald-700 !text-white"
-              >
-                <CheckCircle2 className="size-4" />
-                {reviewingBan ? "Đang xử lý…" : "Ban HĐND Đồng ý (Chuyển Thường trực)"}
+              <Button onClick={() => handleBanReview("approved")} disabled={reviewingBan} className="!bg-emerald-600 hover:!bg-emerald-700 !text-white">
+                <CheckCircle2 className="size-4" /> {reviewingBan ? "Đang xử lý…" : "Đồng ý"}
               </Button>
-              <Button
-                tone="secondary"
-                onClick={() => handleBanReview("rejected")}
-                disabled={reviewingBan}
-                className="!border-red-300 !text-red-700 hover:!bg-red-50 dark:!border-red-800 dark:!text-red-300"
-              >
-                <AlertTriangle className="size-4" />
-                {reviewingBan ? "Đang xử lý…" : "Yêu cầu chỉnh sửa"}
+              <Button tone="secondary" onClick={() => handleBanReview("rejected")} disabled={reviewingBan} className="!border-red-300 !text-red-700">
+                <AlertTriangle className="size-4" /> Yêu cầu chỉnh sửa
               </Button>
             </div>
           </div>
@@ -637,8 +669,8 @@ export default function IndicatorTree({
         <Card>
           <CardHeader
             icon={ListTree}
-            title="Bảng chỉ tiêu"
-            sub="Đã tự tách từ OCR — kiểm tra, sửa/bổ sung rồi Lưu"
+            title="Bóc tách & phân chỉ tiêu"
+            sub="Bộ phận giúp việc bóc tách chỉ tiêu, gán đúng ban/đơn vị, rồi phân chỉ tiêu và đẩy lên Thường trực xác nhận"
             action={<Badge tone="sky">{nodes.length} dòng</Badge>}
           />
           <div className="space-y-3 px-4 py-4">
@@ -651,26 +683,59 @@ export default function IndicatorTree({
                 tone="secondary"
                 onClick={() => {
                   setNodes(SAMPLE_COMMUNE_TREE.map((n) => ({ ...n, key: nid() })));
-                  toast("info", "Đã nạp cây chỉ tiêu mẫu chuẩn từ NQ 32 xã Châu Thành.");
+                  toast("info", "Đã nạp cây chỉ tiêu mẫu.");
                 }}
                 className="!px-3 !py-1.5 !text-xs whitespace-nowrap"
-                title="Áp dụng cây chỉ tiêu mẫu từ NQ 32 xã Châu Thành"
+                title="Áp dụng cây chỉ tiêu mẫu"
               >
                 <Sparkles className="size-3.5 mr-1 text-amber-500" />
-                Mẫu NQ 32 cấp xã
-              </Button>
-              <Button tone="secondary" onClick={submit} disabled={saving || nodes.length === 0} className="flex-1 min-w-44">
-                <Send className="size-4" /> {saving ? "Đang gửi…" : "Lưu & Gửi Ban HĐND thẩm tra"}
+                Mẫu
               </Button>
               <Button
                 type="button"
+                onClick={handleAutoExtract}
+                disabled={saving || autoExtracting || !["issued", "extracted", "pending_distribution"].includes(resolution.status)}
+                className="!bg-sky-600 !px-3 !py-1.5 !text-xs !text-white whitespace-nowrap hover:!bg-sky-700"
+                title="Tự động bóc tách chỉ tiêu từ nội dung OCR để chuyên viên kiểm tra và sửa"
+              >
+                <RefreshCw className="size-3.5 mr-1" /> {autoExtracting ? "Đang bóc tách…" : "Bóc tách tự động"}
+              </Button>
+              <Button
+                tone="secondary"
+                onClick={submit}
+                disabled={saving || nodes.length === 0 || ["draft", "pending_issue"].includes(resolution.status)}
+                className="flex-1 min-w-44"
+                title={["draft", "pending_issue"].includes(resolution.status) ? "Cần Thường trực ký ban hành trước khi bóc tách" : "Lưu kết quả bóc tách chỉ tiêu"}
+              >
+                <Save className="size-4" /> {saving ? "Đang lưu…" : "Lưu bóc tách chỉ tiêu"}
+              </Button>
+              <Button
+                type="button"
+                onClick={handleDistribute}
+                disabled={saving || nodes.length === 0 || !["issued", "extracted", "pending_distribution", "distributed"].includes(resolution.status)}
+                className="flex-1 min-w-48 !bg-indigo-600 hover:!bg-indigo-700 !text-white"
+                title="Phân các chỉ tiêu về các ban đúng với chỉ tiêu"
+              >
+                <Send className="size-4" /> Phân chỉ tiêu về các ban
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSubmitCompletion}
+                disabled={saving || !["distributed", "extracted", "pending_distribution"].includes(resolution.status)}
+                className="flex-1 min-w-52 !bg-emerald-600 hover:!bg-emerald-700 !text-white"
+                title="Bộ phận giúp việc đẩy lên Thường trực xác nhận hoàn thành"
+              >
+                <FileCheck2 className="size-4 mr-1" /> Đẩy lên Thường trực xác nhận
+              </Button>
+              <Button
+                type="button"
+                tone="secondary"
                 onClick={() => setShowCompleteModal(true)}
                 disabled={nodes.length === 0}
-                className="!bg-gradient-to-r !from-emerald-600 !to-teal-600 hover:!from-emerald-700 hover:!to-teal-700 !text-white shadow-md flex-1 min-w-52"
-                title="Xuất file Word và tự động gửi email thông báo kết quả tới UBND xã"
+                className="!px-3 !py-1.5 !text-xs"
+                title="Xuất file Word (tiện ích)"
               >
-                <FileCheck2 className="size-4 mr-1.5" />
-                Hoàn thành xử lý cây chỉ tiêu
+                <FileDown className="size-4 mr-1" /> Xuất Word
               </Button>
             </div>
 

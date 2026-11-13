@@ -14,9 +14,33 @@ const execFileAsync = promisify(execFile);
 const pdfParse = require('pdf-parse');
 
 /**
+ * Đảm bảo biến môi trường TESSDATA_PREFIX trỏ tới thư mục có vie.traineddata
+ */
+function ensureTessdataPrefix() {
+  if (process.env.TESSDATA_PREFIX && fs.existsSync(path.join(process.env.TESSDATA_PREFIX, 'vie.traineddata'))) {
+    return process.env.TESSDATA_PREFIX;
+  }
+  const candidates = [
+    path.join(__dirname, '../../tessdata'),
+    path.join(__dirname, '../tessdata'),
+    'C:\\Users\\hie\\Downloads\\TTNN\\backend\\tessdata',
+    'C:\\Program Files\\Tesseract-OCR\\tessdata',
+    'D:\\Tesseract\\tessdata',
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'vie.traineddata'))) {
+      process.env.TESSDATA_PREFIX = c;
+      return c;
+    }
+  }
+  return '';
+}
+
+/**
  * Tìm đường dẫn Tesseract trên Windows
  */
 function getTesseractPath() {
+  ensureTessdataPrefix();
   const candidates = [
     process.env.TESSERACT_PATH,
     'D:\\Tesseract\\tesseract.exe',
@@ -97,11 +121,16 @@ async function extractWithPyMuPdf(pdfBuffer) {
   const scriptPath = candidates.find((p) => fs.existsSync(p)) || candidates[0];
 
   try {
+    ensureTessdataPrefix();
     fs.writeFileSync(tmpPdf, pdfBuffer);
     const pythonBin = process.env.PYTHON_PATH || 'python';
     const { stdout } = await execFileAsync(pythonBin, [scriptPath, tmpPdf], {
       timeout: 120000,
       maxBuffer: 40 * 1024 * 1024,
+      env: {
+        ...process.env,
+        TESSDATA_PREFIX: process.env.TESSDATA_PREFIX || ensureTessdataPrefix(),
+      },
     });
     const parsed = JSON.parse(stdout.trim());
     if (parsed && parsed.success && parsed.text) {
@@ -149,6 +178,8 @@ function cleanAdministrativeWords(raw) {
   s = s.replace(/Hei\s*d[6o]ng\s*nt?Ian\s*dan/gi, 'Hội đồng nhân dân');
   s = s.replace(/HOI\s*dang\s*nhan\s*dan/gi, 'Hội đồng nhân dân');
   s = s.replace(/H6i\s*dang\s*nhan\s*dan/gi, 'Hội đồng nhân dân');
+  s = s.replace(/Hei\s*d[o6]ng\s*nhan\s*dan/gi, 'Hội đồng nhân dân');
+  s = s.replace(/Hei\s*d[o6]ng\s*nh[ao]n\s*d[ao]n/gi, 'Hội đồng nhân dân');
   s = s.replace(/H[ỘÔƠÒÓỎÕỌO0oÖ6I1][I1i]?\s*[ĐD][ỒÔƠÒÓỎÕỌO0oÖ6][NÑ]?G\s*N[HU]?[ÂĂÁÀẢÃẠA]N\s*D[ÂĂÁÀẢÃẠA]N/gi, 'HỘI ĐỒNG NHÂN DÂN');
   s = s.replace(/C[Q0O\(\),]+NG\s*H[6OÔA]+\s*X[AÁ]\s*H[O0I\(\),]+I?\s*CH[UƯO]+\s*NGH[iIÎIÌ]+A\s*[WVTIE&]+\s*NAM/gi, 'CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM');
   s = s.replace(/CONG\s*HOA\s*XA\s*H[^\w\s]*I\s*CHU\s*NGHIA\s*VIET\s*NAM/gi, 'CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM');
@@ -235,6 +266,8 @@ function cleanAdministrativeWords(raw) {
 
   // 8. Thường trực & Giám sát & Mặt trận
   s = s.replace(/\bThudng\s*tr[lb]rc\b/gi, 'Thường trực');
+  s = s.replace(/\bThudng\s*t[Hh][Cc]\b/gi, 'Thường trực');
+  s = s.replace(/\bThu[o6]ng\s*tr[lb]c\b/gi, 'Thường trực');
   s = s.replace(/\bThudng\s*tuc\b/gi, 'Thường trực');
   s = s.replace(/\bgUm\s*sat\b/gi, 'giám sát');
   s = s.replace(/\bgi\s*an\s*sat\b/gi, 'giám sát');
@@ -264,22 +297,54 @@ function cleanAdministrativeWords(raw) {
   s = s.replace(/Dan\s*bi6t.*?dan\s*tItv\s*AIr&2g/gi, 'Dân biết, dân bàn, dân làm, dân kiểm tra, dân giám sát, dân thụ hưởng');
 
   // 10. Thuật ngữ cán bộ, công chức, ngân sách & chính quyền (NQ 26 & tương tự)
-  s = s.replace(/bien\s*ch[6eê]/gi, 'biên chế');
-  s = s.replace(/bia\s*cha\s*c6ng\s*chiec/gi, 'biên chế công chức');
-  s = s.replace(/can\s*b[eo],\s*c6ng\s*ch[\(r]*c/gi, 'cán bộ, công chức');
-  s = s.replace(/c6ng\s*ch[\(r]*c/gi, 'công chức');
-  s = s.replace(/c6ng\s*chao/gi, 'công chức');
-  s = s.replace(/vi6n\s*ch[oO]c/gi, 'viên chức');
-  s = s.replace(/trong\s*cac\s*ca\s*quan\s*c[a\(]+a/gi, 'trong các cơ quan của');
+  // --- biên chế (nhiều biến thể OCR: bi6n ch6, bi6n cha, bian cha, bian ch6, bien ch6) ---
+  // Thứ tự: Tổng số biên chế -> biên chế -> số lượng
+  s = s.replace(/T[6o][^a-zA-Z\s]{0,3}ng\s*s[6ao]\s*bi[e6a]n\s*ch[6eoa]/gi, 'Tổng số biên chế');
+  s = s.replace(/T[6o][^a-zA-Z\s]{0,3}ng\s*s[6ao]\s*lu[qọ]ng/gi, 'Tổng số lượng');
+  s = s.replace(/T[6o][^a-zA-Z\s]{0,3}ng\s*s[6ao]/gi, 'Tổng số');
+  s = s.replace(/bi[e6a]n\s*ch[6eoad][^a-z]?/gi, (m) => 'biên chế' + (m.endsWith(' ') ? ' ' : ''));
+  s = s.replace(/bia\s*cha\s*c[o6]ng\s*chiec/gi, 'biên chế công chức');
+  // --- số lượng (S6 luqng, s6 luong) ---
+  s = s.replace(/[Ss][o6]\s*lu[qọ]ng/g, (m) => m[0] === 'S' ? 'Số lượng' : 'số lượng');
+  // --- cán bộ, công chức (can be, c6ng chac) ---
+  s = s.replace(/can\s*b[eo],\s*c[o6]ng\s*cha[co]/gi, 'cán bộ, công chức');
+  s = s.replace(/c[o6]ng\s*cha[co]/gi, 'công chức');
+  s = s.replace(/c[o6]ng\s*ch[a(r]*[oc]/gi, 'công chức');
+  // --- viên chức (vi6n chac, vi6n chao, vien chac, vien choc) ---
+  s = s.replace(/vi[e6]n\s*cha[co]/gi, 'viên chức');
+  s = s.replace(/vi[e6]n\s*ch[ao(O]c/gi, 'viên chức');
+  s = s.replace(/vi[e6]n\s*chac/gi, 'viên chức');
+  // --- người làm việc (ngudi lam viec) ---
+  s = s.replace(/ngudi\s*lam\s*vi[e6]c/gi, 'người làm việc');
+  s = s.replace(/ngu[o0d][^a-zA-Z\s]{0,2}i\s*lam\s*vi[e6]c/gi, 'người làm việc');
+  // --- hưởng lương từ (huang luang ttl, huang luang trl) ---
+  s = s.replace(/huang\s*luang\s*tt?[rl1]/gi, 'hưởng lương từ');
+  s = s.replace(/hu[o6][^a-zA-Z\s]{0,2}ng\s*lu[ao][^a-zA-Z\s]{0,2}ng\s*tt?[rl1]/gi, 'hưởng lương từ');
+  // --- ngân sách nhà nước ---
+  s = s.replace(/ngan\s*s[£eâ]ch\s*nha\s*nud?[eo]c?/gi, 'ngân sách nhà nước');
+  s = s.replace(/ngan\s*sach\s*nha\s*nuoc/gi, 'ngân sách nhà nước');
+  // --- Trạm Y tế (Tr@m Y ta, Tram Y te) ---
+  s = s.replace(/Tr[a@*][mn]\s*Y\s*t[ae6]/gi, 'Trạm Y tế');
+  // --- Dịch vụ (Djch vp, Dich vu) ---
+  s = s.replace(/D[ji]ch\s*v[up]/gi, 'Dịch vụ');
+  // --- Sự nghiệp (SIr nghiep, Slr nghiep, slr nghiep) ---
+  s = s.replace(/[Ss][Ilr][r]?\s*nghi[e][^a-zA-Z\s]{0,2}p/gi, 'Sự nghiệp');
+  s = s.replace(/slr\s*nghiep/gi, 'sự nghiệp');
+  // --- Trung tâm (Trung tam) ---
+  s = s.replace(/Trung\s*tam\b/gi, 'Trung tâm');
+  // --- HQI d6ng nhan dan (Hội đồng nhân dân) ---
+  s = s.replace(/HQI\s*d[o6]ng\s*nhan\s*dan/gi, 'Hội đồng nhân dân');
+  // --- trong các cơ quan của / Hội đồng nhân dân ---
+  s = s.replace(/trong\s*cac\s*ca\s*quan\s*c[a(]+a/gi, 'trong các cơ quan của');
   s = s.replace(/cac\s*ca\s*quan/gi, 'các cơ quan');
   s = s.replace(/\bca\s*quan\b/gi, 'cơ quan');
-  s = s.replace(/\bc[\(a]+a\s+H[eê]i\s*d[ao6]ng\s*nhan\s*dan/gi, 'của Hội đồng nhân dân');
+  s = s.replace(/\bc[(a]+a\s+H[eê]i\s*d[ao6]ng\s*nhan\s*dan/gi, 'của Hội đồng nhân dân');
   s = s.replace(/Hei\s*dang\s*nhan\s*dan/gi, 'Hội đồng nhân dân');
   s = s.replace(/s6\s*hrgng\s*nguai\s*lam\s*viec/gi, 'số lượng người làm việc');
   s = s.replace(/huang\s*luang\s*t[i1r]+/gi, 'hưởng lương từ');
   s = s.replace(/ngan\s*s[£e]ch\s*nha\s*nud?e/gi, 'ngân sách nhà nước');
-  s = s.replace(/c[\(]+la\b/gi, 'của');
-  s = s.replace(/\bc[\(a]+a\b/gi, 'của');
+  s = s.replace(/c[(]+la\b/gi, 'của');
+  s = s.replace(/\bc[(a]+a\b/gi, 'của');
   s = s.replace(/\bnh[aâ]n\s*d[aâ]n\s*xa\b/gi, 'nhân dân xã');
   s = s.replace(/\bnhân\s*dân\s*xa\b/gi, 'nhân dân xã');
   s = s.replace(/nim\s*(\d{4})/gi, 'năm $1');
@@ -291,6 +356,9 @@ function cleanAdministrativeWords(raw) {
   s = s.replace(/vi\s*tri\s*viec\s*tam/gi, 'vị trí việc làm');
   s = s.replace(/86\s*luqng\s*ngwdi\s*tam\s*\\?iec/gi, 'số lượng người làm việc');
   s = s.replace(/Can\s*at2\s*Lu4t/gi, 'Căn cứ Luật');
+  // --- Tang -> Tổng (đầu dòng, OCR mất dấu) ---
+  s = s.replace(/^Tang\s+/gm, 'Tổng ');
+  s = s.replace(/^T6ng\s+/gm, 'Tổng ');
 
   // 11. Tên lãnh đạo chuẩn nếu có
   s = s.replace(/Thach\s*Thi\s*Sa\s*Thy/gi, 'Thạch Thị Sa Thy');
@@ -433,7 +501,7 @@ function extractIssuanceDate(text) {
  */
 function extractSigner(lines, fullText) {
   // 1. Quét tên chuẩn nếu có trong văn bản
-  if (/Th[?aạ]ch\s*Th[!iị]\s*Sa\s*Thy/i.test(fullText)) {
+  if (/Th[?aạe]ch\s*Th[!iị]\s*Sa\s*Thy/i.test(fullText) || /Th[?aạe]ch\s*Th[iị]|\bSa\s*Thy\b/i.test(fullText)) {
     return 'Thạch Thị Sa Thy';
   }
   if (/Ngô\s*Thu\s*Hương/i.test(fullText)) {

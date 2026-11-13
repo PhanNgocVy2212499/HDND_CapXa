@@ -14,10 +14,14 @@ async function verifyFirebaseToken(req, res, next) {
       return res.status(401).json({ message: 'Thiếu Firebase ID Token.', projectId: process.env.FIREBASE_PROJECT_ID || '' });
     }
     const decoded = await auth.verifyIdToken(token, true);
+    // Chuẩn hóa role để tương thích ngược: chuyen_vien -> giup_viec
+    const rawRole = decoded.role;
+    const role = rawRole === 'chuyen_vien' ? 'giup_viec' : rawRole;
     req.user = {
       uid: decoded.uid,
       email: decoded.email,
-      role: decoded.role, // custom claim do Backend set via setCustomUserClaims
+      role, // custom claim do Backend set via setCustomUserClaims
+      rawRole,
       departmentId: decoded.departmentId,
       ...decoded,
     };
