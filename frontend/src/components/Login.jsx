@@ -74,11 +74,11 @@ export default function Login() {
           </div>
         </div>
 
-        <form onSubmit={submit} className="space-y-3">
+        <form onSubmit={submit} className="space-y-3" autoComplete="off">
           <Field label="Email">
             <TextInput
               type="email"
-              autoComplete="username"
+              autoComplete="off"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="chuyenvien@xa.gov.vn"
@@ -88,7 +88,7 @@ export default function Login() {
             <div className="relative">
               <TextInput
                 type={showPw ? "text" : "password"}
-                autoComplete="current-password"
+                autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
@@ -119,7 +119,10 @@ export default function Login() {
               <button
                 key={a.email}
                 type="button"
-                onClick={() => setEmail(a.email)}
+                onClick={() => {
+                  setEmail(a.email);
+                  setPassword("123456");
+                }}
                 title={a.role}
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-mono text-xs font-semibold text-slate-500 transition-all duration-200 outline-none hover:border-emerald-400 hover:bg-emerald-500/5 hover:text-emerald-700 focus-visible:ring-4 focus-visible:ring-emerald-500/30 active:scale-95 dark:border-slate-700 dark:text-slate-400 dark:hover:text-emerald-300"
               >
