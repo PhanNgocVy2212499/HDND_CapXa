@@ -31,6 +31,8 @@ const SKIP_PATTERNS = [
   /có\s*hiệu\s*lực\s*kể\s*từ\s*ngày/i,
   /thông\s*qua\s*ngày\s+\d+/i,
   /tổ\s*chức\s*triển\s*khai.*?giám\s*sát/i, // Điều 2 giám sát chung của HĐND xã
+  /^(?:tổ\s*chức\s*thực\s*hiện|hiệu\s*lực\s*thi\s*hành)/i,
+  /giao\s+(?:cho\s+)?(?:ubnd|ủy\s*ban\s*nhân\s*dân)\s+.*?(?:triển\s*khai|tổ\s*chức\s*thực\s*hiện)/i,
   /bảng\s*tổng\s*hợp\s*kinh\s*phí/i,       // Tiêu đề phụ lục
   /nguồn\s*kinh\s*phí\s*thực\s*hiện\s*:?$/i, // Tiêu đề nhóm không có số tiền
   /^[-•*–+]?\s*(tt\.|sở\s*tài\s*chính|ubmttq|đb\s*hđnd|ủy\s*viên\s*ubnd|phòng\s*nghiệp\s*vụ.*?kbnn|lđvp|lưu\s*:?\s*vt)/i, // Nơi nhận văn bản
