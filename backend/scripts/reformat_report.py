@@ -8,12 +8,12 @@ from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 import re
 
-SOURCE_PATH = r'c:\Users\hie\Downloads\TTNN\Bao_Cao_Ky_Thuat_He_Thong_HDND_Cap_Xa_GOC.docx'
+SOURCE_PATH = r'c:\Users\hie\Downloads\TTNN\Bao_Cao_Dac_Ta_Ky_Thuat_He_Thong_HDND_Cap_Xa.docx'
 if not os.path.exists(SOURCE_PATH):
     SOURCE_PATH = r'c:\Users\hie\Downloads\TTNN\Bao_Cao_Ky_Thuat_He_Thong_HDND_Cap_Xa.docx'
 
-OUTPUT_PATH_1 = r'c:\Users\hie\Downloads\TTNN\Bao_Cao_Dac_Ta_Ky_Thuat_He_Thong_HDND_Cap_Xa.docx'
-OUTPUT_PATH_2 = r'c:\Users\hie\Downloads\TTNN\Bao_Cao_Do_An_Tot_Nghiep_HDND_Cap_Xa.docx'
+OUTPUT_PATH_1 = r'c:\Users\hie\Downloads\TTNN\Bao_Cao_Dac_Ta_HDND_Cap_Xa.docx'
+OUTPUT_PATH_2 = r'c:\Users\hie\Downloads\TTNN\Bao_Cao_Dac_Ta_Ky_Thuat_He_Thong_HDND_Cap_Xa.docx'
 SECONDARY_PATH = r'c:\Users\hie\Downloads\TTNN\Bao_Cao_Ky_Thuat_He_Thong_HDND_Cap_Xa.docx'
 
 def set_cell_margins(cell, top=80, bottom=80, left=120, right=120):
@@ -53,6 +53,28 @@ def add_cover_page_border(section):
     xml_str = '<w:pgBorders xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:offsetFrom="page" w:display="firstPage"><w:top w:val="double" w:sz="18" w:space="20" w:color="000000"/><w:left w:val="double" w:sz="18" w:space="24" w:color="000000"/><w:bottom w:val="double" w:sz="18" w:space="20" w:color="000000"/><w:right w:val="double" w:sz="18" w:space="20" w:color="000000"/></w:pgBorders>'
     pgBrd = parse_xml(xml_str)
     sectPr.append(pgBrd)
+
+def remove_all_pBdr_and_blue_lines(doc):
+    # Xóa triệt để toàn bộ đường viền đoạn văn (pBdr) - đặc biệt là đường viền dưới màu xanh của các tiêu đề chương
+    for p in doc.paragraphs:
+        pPr = p._p.get_or_add_pPr()
+        for child in list(pPr):
+            if child.tag.endswith('pBdr'):
+                pPr.remove(child)
+                
+    # Xóa pBdr và tcBorders bên trong tất cả các ô của toàn bộ các bảng
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                tcPr = cell._tc.get_or_add_tcPr()
+                for child in list(tcPr):
+                    if child.tag.endswith('tcBorders'):
+                        tcPr.remove(child)
+                for p in cell.paragraphs:
+                    pPr = p._p.get_or_add_pPr()
+                    for child in list(pPr):
+                        if child.tag.endswith('pBdr'):
+                            pPr.remove(child)
 
 def add_page_number_to_footer(footer):
     p = footer.paragraphs[0]
@@ -543,6 +565,10 @@ def build_specification_report():
         add_p_before(target_p, "• Cảnh báo kiểm tra mật khẩu đã lưu của trình duyệt: Khi đăng nhập bằng tài khoản thử nghiệm trên Google Chrome, trình duyệt có thể hiển thị hộp thoại cảnh báo 'Mật khẩu vừa sử dụng đã bị lộ trong một sự cố rò rỉ dữ liệu'. Đây là cơ chế cảnh báo an toàn mật khẩu tự động của Google đối với chuỗi ký tự phổ biến `123456`, không phải lỗi hệ thống. Để không hiển thị cảnh báo này khi kiểm thử, người dùng truy cập chrome://password-manager/settings và tắt tạm tùy chọn 'Cảnh báo khi mật khẩu bị lộ'. Hệ thống cũng đã cấu hình thuộc tính autoComplete off trên form đăng nhập để hạn chế tối đa tình trạng này.", 'bullet')
         add_p_before(target_p, "• Tệp PDF scan bị lỗi font hoặc mất dấu khi bóc tách: Hệ thống đã tích hợp sẵn bộ chuẩn hóa từ vựng hành chính cleanAdministrativeWords nhằm tự động khắc phục các lỗi quang học như vỡ dấu, thiếu ký tự tiếng Việt. Trường hợp tệp scan có chất lượng quá mờ (độ phân giải dưới 150 DPI), Chuyên viên có thể hiệu chỉnh trực tiếp nội dung chỉ tiêu trên lưới dữ liệu trước khi lưu.", 'bullet')
         add_p_before(target_p, "• Lỗi thiếu tệp minh chứng khi gửi báo cáo: Hệ thống áp dụng quy tắc bắt buộc (Mandatory Evidence Validation). Nếu người dùng chưa chọn tệp đính kèm, nút gửi báo cáo sẽ tự động khóa nhằm ngăn chặn tình trạng cập nhật khống số liệu mà không có căn cứ pháp lý.", 'bullet')
+
+    # Xóa triệt để toàn bộ đường viền dưới màu xanh và mọi đường viền đoạn văn (pBdr) trong toàn bộ bài
+    remove_all_pBdr_and_blue_lines(doc)
+    print("Step 5: Successfully removed all paragraph bottom borders (blue lines) across the entire document.")
 
     # Lưu tệp hoàn thiện
     doc.save(OUTPUT_PATH_1)
